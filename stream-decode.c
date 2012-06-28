@@ -71,6 +71,9 @@ struct memory_block_data {
 struct memory_block_signature {
 	struct memory_block	mem;
 	enum stream_signature	type;
+
+	struct stream_header const	*shdr;
+	struct stream_hunk_header const	*hhdr;
 };
 
 static void show_help(void)
@@ -330,6 +333,8 @@ int main(int argc, char *argv[])
 		payload.len = be32toh(hhdr.decompress_len);
 
 		signature.type = hhdr.sign_type;
+		signature.shdr = &hdr;
+		signature.hhdr = &hhdr;
 
 		if (!process_hunk(program, &payload, &signature))
 			return EX_DATAERR;
