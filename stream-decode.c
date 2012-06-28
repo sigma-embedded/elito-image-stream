@@ -139,7 +139,7 @@ static void const	*stream_data_get(struct stream_data *s, size_t cnt)
 			__func__, cnt);
 		res = NULL;		/* EOF */
 	} else {
-		res = s->mem;
+		res = s->mem + s->pos;
 		s->pos += cnt;
 	}
 
