@@ -121,7 +121,8 @@ static bool	write_all(int fd, void const *buf, size_t len)
 	return len == 0;
 }
 
-static bool	dump_hunk(int ofd, struct hunk const *hunk)
+static bool	dump_hunk(int ofd, struct hunk const *hunk,
+			  struct stream_header const *shdr)
 {
 	struct stream_hunk_header	hdr = {
 		.type	=  htobe32(hunk->type),
@@ -132,6 +133,8 @@ static bool	dump_hunk(int ofd, struct hunk const *hunk)
 	struct stat			st;
 	int				hfd;
 	bool				rc = false;
+
+	(void)shdr;
 
 	hfd = open(hunk->filename, O_RDONLY);
 	if (hfd < 0) {
@@ -177,6 +180,7 @@ int main(int argc, char *argv[])
 	struct hunk		*hunks = NULL;
 	size_t			num_hunks = 0;
 	size_t			i;
+	int			rand_fd;
 
 	struct stream_header	hdr = {
 		.magic = htobe32(STREAM_HEADER_MAGIC),
@@ -205,9 +209,17 @@ int main(int argc, char *argv[])
 		}
 	}
 
+	rand_fd = open("/dev/urandom", O_RDONLY);
+	if (rand_fd < 0 ||
+	    read(rand_fd, hdr.salt, sizeof hdr.salt) != sizeof hdr.salt) {
+		perror("generating salt");
+		return EX_OSERR;
+	}
+	close(rand_fd);
+
 	write_all(1, &hdr, sizeof hdr);
 	for (i = 0; i < num_hunks; ++i) {
-		if (!dump_hunk(1, &hunks[i]))
+		if (!dump_hunk(1, &hunks[i], &hdr))
 			return EX_DATAERR;
 	}
 }

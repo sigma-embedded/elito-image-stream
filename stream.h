@@ -42,8 +42,11 @@ enum stream_compression {
 struct stream_header {
 	be32_t		magic;
 	be32_t		version;
+	be8_t		salt[8];
 	be32_t		_unused0;
 	be32_t		_unused1;
+	be32_t		_unused2;
+	be32_t		_unused3;
 } __packed;;
 
 struct stream_hunk_header {
