@@ -58,31 +58,153 @@ static void show_version(void)
 struct hunk {
 	unsigned int			type;
 	enum stream_compression		compression;
+	enum stream_signature		signature;
 	char const			*filename;
 };
+
+static struct {
+	char const		*id;
+	enum stream_signature	signature;
+} const			SIGNATURE_ALGORITHMS[] = {
+	{ "md5",    STREAM_SIGNATURE_MD5 },
+	{ "sha1",   STREAM_SIGNATURE_SHA1 },
+	{ "sha256", STREAM_SIGNATURE_SHA256 },
+	{ "sha512", STREAM_SIGNATURE_SHA256 },
+	{ "gpg",    STREAM_SIGNATURE_GPG },
+};
+
+static struct {
+	char const		*id;
+	enum stream_compression	compression;
+} const			COMPRESSION_ALGORITHMS[] = {
+	{ "gzip",   STREAM_COMPRESS_GZIP },
+	{ "xz",     STREAM_COMPRESS_XZ },
+};
+
+#define ARRAY_SIZE(_a)	(sizeof(_a) / sizeof(_a)[0])
+
+static bool parse_signature(enum stream_signature *sig, char const *str)
+{
+	size_t		i;
+
+	for (i = 0; i < ARRAY_SIZE(SIGNATURE_ALGORITHMS); ++i) {
+		if (strcmp(str, SIGNATURE_ALGORITHMS[i].id) != 0)
+			continue;
+
+		*sig = SIGNATURE_ALGORITHMS[i].signature;
+		return true;
+	}
+
+	return false;
+}
+
+static bool parse_compression(enum stream_compression *sig, char const *str)
+{
+	size_t		i;
+
+	for (i = 0; i < ARRAY_SIZE(COMPRESSION_ALGORITHMS); ++i) {
+		if (strcmp(str, COMPRESSION_ALGORITHMS[i].id) != 0)
+			continue;
+
+		*sig = COMPRESSION_ALGORITHMS[i].compression;
+		return true;
+	}
+
+	return false;
+}
+
+static char const *parse_hunk_opts(struct hunk *hunk, char const *opt)
+{
+	char const	*next = strchr(opt, ',');
+	char		*val;
+	size_t		opt_len;
+	char		*cur_opt;
+	char const	*key;
+
+	if (next == NULL)
+		next = strchr(opt, '=');
+
+	if (next == NULL)
+		next = opt + strlen(opt);
+
+	opt_len = next - opt;
+	cur_opt = alloca(opt_len + 1);
+
+	memcpy(cur_opt, opt, opt_len);
+	cur_opt[opt_len] = '\0';
+
+	val = strchr(cur_opt, '!');
+	if (val)
+		*val++ = '\0';
+
+	key = cur_opt;
+	if (val == NULL && parse_signature(&hunk->signature, key))
+		return next;
+
+	if (val == NULL && parse_compression(&hunk->compression, key))
+		return next;
+
+	if (strcmp(key, "sig") == 0) {
+		if (val == NULL || !parse_signature(&hunk->signature, val)) {
+			fprintf(stderr, 
+				"unsupported signature algorithm '%s'\n", val);
+			return NULL;
+		}
+
+		return next;
+	}
+
+	if (strcmp(key, "pack") == 0 || strcmp(key, "compression") == 0) {
+		if (val == NULL || !parse_compression(&hunk->compression, val)) {
+			fprintf(stderr, 
+				"unsupported compression algorithm '%s'\n", val);
+			return NULL;
+		}
+
+		return next;
+	}
+
+	fprintf(stderr, "unsupported option '%s'\n", key);
+	return NULL;
+}
 
 static bool register_hunk(char const *desc, struct hunk **hunks,
 			  size_t *num_hunks)
 {
 	char		*errptr;
-	struct hunk	res = {};
+	char const	*ptr;
 	struct hunk	*new_hunks;
 
-	res.type = strtoul(desc, &errptr, 0);
-	res.compression = STREAM_COMPRESS_NONE;
+	struct hunk	res = {
+		.type = strtoul(desc, &errptr, 0),
+		.compression = STREAM_COMPRESS_NONE,
+		.signature = STREAM_SIGNATURE_NONE,
+	};
 
-	switch (*errptr) {
-	case ',':
-		/* \todo: implement me */
-		fprintf(stderr, "opts-parsing not implemented yet\n");
-		return false;
+	ptr = errptr;
 
-	case '=':
-		res.filename = errptr + 1;
-		break;
+	while (*ptr) {
+		switch (*ptr) {
+		case ',':
+			ptr = parse_hunk_opts(&res, ptr+1);
+			if (ptr == NULL)
+				return false;
 
-	default:
-		fprintf(stderr, "invalid hunk description '%s'\n", desc);
+			break;
+
+		case '=':
+			res.filename = ptr + 1;
+			ptr += strlen(ptr); /* -> points to terminating \0 */
+			break;
+
+		default:
+			fprintf(stderr, "invalid hunk description '%s'\n", desc);
+			return false;
+		}
+	}
+
+	if (!res.filename) {
+		fprintf(stderr, "missing filename in '%s'\n", desc);
 		return false;
 	}
 
