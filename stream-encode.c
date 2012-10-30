@@ -33,6 +33,8 @@
 
 #include <sys/stat.h>
 
+#include "signature.h"
+
 #define CMD_HELP                0x1000
 #define CMD_VERSION             0x1001
 
@@ -60,17 +62,21 @@ struct hunk {
 	enum stream_compression		compression;
 	enum stream_signature		signature;
 	char const			*filename;
+
+	struct signature_algorithm *	sig_alg;
 };
 
 static struct {
 	char const		*id;
 	enum stream_signature	signature;
+	struct signature_algorithm *(*generator)(void);
 } const			SIGNATURE_ALGORITHMS[] = {
-	{ "md5",    STREAM_SIGNATURE_MD5 },
-	{ "sha1",   STREAM_SIGNATURE_SHA1 },
-	{ "sha256", STREAM_SIGNATURE_SHA256 },
-	{ "sha512", STREAM_SIGNATURE_SHA256 },
-	{ "gpg",    STREAM_SIGNATURE_GPG },
+	{ "none",   STREAM_SIGNATURE_NONE, signature_algorithm_none_create },
+	{ "md5",    STREAM_SIGNATURE_MD5,  signature_algorithm_md5_create },
+	{ "sha1",   STREAM_SIGNATURE_SHA1, signature_algorithm_sha1_create },
+	{ "sha256", STREAM_SIGNATURE_SHA256, signature_algorithm_sha256_create },
+	{ "sha512", STREAM_SIGNATURE_SHA256, signature_algorithm_sha512_create },
+//	{ "gpg",    STREAM_SIGNATURE_GPG },
 };
 
 static struct {
@@ -83,15 +89,23 @@ static struct {
 
 #define ARRAY_SIZE(_a)	(sizeof(_a) / sizeof(_a)[0])
 
-static bool parse_signature(enum stream_signature *sig, char const *str)
+static bool parse_signature(enum stream_signature *sig, 
+			    struct signature_algorithm **alg,
+			    char const *str)
 {
 	size_t		i;
+
+	if (*alg) {
+		(*alg)->free(*alg);
+		*alg = NULL;
+	}
 
 	for (i = 0; i < ARRAY_SIZE(SIGNATURE_ALGORITHMS); ++i) {
 		if (strcmp(str, SIGNATURE_ALGORITHMS[i].id) != 0)
 			continue;
 
 		*sig = SIGNATURE_ALGORITHMS[i].signature;
+		*alg = SIGNATURE_ALGORITHMS[i].generator();
 		return true;
 	}
 
@@ -138,14 +152,16 @@ static char const *parse_hunk_opts(struct hunk *hunk, char const *opt)
 		*val++ = '\0';
 
 	key = cur_opt;
-	if (val == NULL && parse_signature(&hunk->signature, key))
+	if (val == NULL && parse_signature(&hunk->signature,
+					   &hunk->sig_alg, key))
 		return next;
 
 	if (val == NULL && parse_compression(&hunk->compression, key))
 		return next;
 
 	if (strcmp(key, "sig") == 0) {
-		if (val == NULL || !parse_signature(&hunk->signature, val)) {
+		if (val == NULL || !parse_signature(&hunk->signature, 
+						    &hunk->sig_alg, val)) {
 			fprintf(stderr, 
 				"unsupported signature algorithm '%s'\n", val);
 			return NULL;
@@ -179,6 +195,7 @@ static bool register_hunk(char const *desc, struct hunk **hunks,
 		.type = strtoul(desc, &errptr, 0),
 		.compression = STREAM_COMPRESS_NONE,
 		.signature = STREAM_SIGNATURE_NONE,
+		.sig_alg = signature_algorithm_none_create(),
 	};
 
 	ptr = errptr;
@@ -246,11 +263,16 @@ static bool	write_all(int fd, void const *buf, size_t len)
 static bool	dump_hunk(int ofd, struct hunk const *hunk,
 			  struct stream_header const *shdr)
 {
+	struct signature_algorithm	*sig_alg = hunk->sig_alg;
+	void const			*sig_buf;
+	size_t				sig_len;
+
 	struct stream_hunk_header	hdr = {
-		.type	=  htobe32(hunk->type),
-		.sign_type = STREAM_SIGNATURE_NONE,
-		.compress_type = STREAM_COMPRESS_NONE,
-		.sign_len = htobe32(0),
+		.type		= htobe32(hunk->type),
+		.sign_type	= hunk->signature,
+		.compress_type	= hunk->compression,
+		.fixed_sign_len	= ((hunk->signature == STREAM_SIGNATURE_NONE) ?
+				   htobe32(0) : htobe32(~0u)),
 	};
 	struct stat			st;
 	int				hfd;
@@ -272,6 +294,10 @@ static bool	dump_hunk(int ofd, struct hunk const *hunk,
 	hdr.hunk_len = htobe32(st.st_size);
 	hdr.decompress_len = htobe32(st.st_size);
 
+	signature_reset(sig_alg);
+	if (!signature_update(sig_alg, shdr->salt, sizeof shdr->salt))
+		goto out;
+
 	write_all(ofd, &hdr, sizeof hdr);
 	for (;;) {
 		unsigned char	buf[1024*1024];
@@ -286,7 +312,20 @@ static bool	dump_hunk(int ofd, struct hunk const *hunk,
 			goto out;
 		}
 
+		if (!signature_update(sig_alg, buf, l))
+			goto out;
+
 		if (!write_all(ofd, buf, l))
+			goto out;
+	}
+
+	if (!sig_alg->finish(sig_alg, &sig_buf, &sig_len))
+		goto out;
+
+	if (hunk->signature != STREAM_SIGNATURE_NONE) {
+		be32_t		sig_len_be = htobe32(sig_len);
+		if (!write_all(ofd, &sig_len_be, sizeof sig_len_be) ||
+		    !write_all(ofd, sig_buf, sig_len))
 			goto out;
 	}
 

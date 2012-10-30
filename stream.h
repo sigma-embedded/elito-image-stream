@@ -59,7 +59,7 @@ struct stream_hunk_header {
 	be8_t		_unused1;
 	be32_t		hunk_len;
 	be32_t		decompress_len;
-	be32_t		sign_len;
+	be32_t		fixed_sign_len;
 
 	be32_t		_unused2;
 	be32_t		_unused3;

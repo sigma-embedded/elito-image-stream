@@ -26,6 +26,7 @@
 #include <string.h>
 #include <errno.h>
 #include <sysexits.h>
+#include <fcntl.h>
 
 #include <getopt.h>
 #include <unistd.h>
@@ -35,9 +36,12 @@
 #include <sys/param.h>
 #include <sys/wait.h>
 
+#include "signature.h"
+
 #define CMD_HELP                0x1000
 #define CMD_VERSION             0x1001
 
+#define MAX_SIGNATURE_SIZE	(1 * 1024 * 1024)
 
 #define PROCESS_SIZE	(1024*1024)
 
@@ -51,14 +55,14 @@ static struct option const		CMDLINE_OPTIONS[] = {
 };
 
 struct stream_data {
-	void const	*mem;
-	size_t		len;
-	size_t		pos;
+	int		fd;
+	bool		is_eos;
 };
 
 struct memory_block {
-	void const	*data;
-	size_t		len;
+	struct stream_data	*stream;
+	void const		*data;
+	size_t			len;
 };
 
 struct memory_block_data {
@@ -90,91 +94,54 @@ static void show_version(void)
 
 static bool	stream_data_open(struct stream_data *s, int fd)
 {
-	struct stat	st;
-
-	if (fstat(fd, &st) < 0) {
-		perror("fstat()");
-		return false;
-	}
-
-	s->len = st.st_size;
-	s->mem = mmap(NULL, s->len, PROT_READ, MAP_SHARED, fd, 0);
-	s->pos = 0;
-
-	return true;
+	s->fd = fd;
+	s->is_eos = false;
+	return fd >= 0;
 }
 
 static void	stream_data_close(struct stream_data *s)
 {
-	munmap((void *)s->mem, s->len);
-	s->mem = NULL;
-	s->len = 0;
+	close(s->fd);
 }
 
-static bool	stream_data_read(struct stream_data *s, void *buf, size_t cnt)
+static bool	stream_data_read(struct stream_data *s, void *buf, size_t cnt,
+				 bool ignore_eos)
 {
-	if (cnt > s->len - s->pos) {
-		fprintf(stderr, "%s: EOF reached while reading %zu bytes\n",
-			__func__, cnt);
-		return false;		/* EOF */
-	}
+	size_t		tlen = 0;
 
-	memcpy(buf, s->mem + s->pos, cnt);
-	s->pos += cnt;
-
-	return true;
-}
-
-static bool	stream_data_eof(struct stream_data const *s)
-{
-	return s->pos == s->len;
-}
-
-
-static void const	*stream_data_get(struct stream_data *s, size_t cnt)
-{
-	void const	*res;
-	if (cnt > s->len - s->pos) {
-		fprintf(stderr, "%s: EOF reached while reading %zu bytes\n",
-			__func__, cnt);
-		res = NULL;		/* EOF */
-	} else {
-		res = s->mem + s->pos;
-		s->pos += cnt;
-	}
-
-	return res;
-}
-
-static bool	write_all(int fd, void const *buf, size_t len)
-{
-	while (len > 0) {
-		ssize_t	l = write(fd, buf, len);
+	while (cnt > 0) {
+		ssize_t		l = read(s->fd, buf, cnt);
 
 		if (l > 0) {
-			buf += l;
-			len -= l;
-		} else if (l == 0) {
-			fprintf(stderr, "null-write\n");
+			cnt  -= l;
+			buf  += l;
+			tlen += l;
+		} else if (l < 0) {
+			perror("read()");
 			break;
-		} else if (errno == EINTR)
-			continue;
-		else {
-			perror("write()");
+		} else {
+			if (tlen > 0 || !ignore_eos)
+				fprintf(stderr, "%s: EOS reached while reading\n",
+					__func__);
+			else
+				cnt = 0;
+
+			s->is_eos = true;
 			break;
 		}
 	}
 
-	return len == 0;
+	return cnt == 0;
 }
 
 static bool	process_hunk(char const *program,
 			     struct memory_block_data const *payload,
 			     struct memory_block_signature const *signature)
 {
-	size_t		len;
-	pid_t		pid;
-	int		pfds[2];
+	size_t				len;
+	pid_t				pid = -1;
+	int				pfds[2] = { -1, -1 };
+	struct signature_algorithm	*sigalg = NULL;
 
 	switch (payload->compression) {
 	case STREAM_COMPRESS_NONE:
@@ -199,13 +166,26 @@ static bool	process_hunk(char const *program,
 		return false;
 	}
 
+	if ((signature->type != STREAM_SIGNATURE_NONE && signature->mem.len != ~0u) ||
+	    (signature->type == STREAM_SIGNATURE_NONE && signature->mem.len == ~0u)) {
+		fprintf(stderr, "bad signature length %zu\n",
+			signature->mem.len);
+		return false;
+	}
 
 	switch (signature->type) {
 	case STREAM_SIGNATURE_NONE:
+		sigalg = signature_algorithm_none_create();
 		break;
 
 	case STREAM_SIGNATURE_SHA1:
+		sigalg = signature_algorithm_sha1_create();
+		break;
+
 	case STREAM_SIGNATURE_SHA256:
+		sigalg = signature_algorithm_sha256_create();
+		break;
+
 	case STREAM_SIGNATURE_GPG:
 		/* \todo: implement me */
 		fprintf(stderr, "signature type %u not implemented yet\n",
@@ -217,17 +197,25 @@ static bool	process_hunk(char const *program,
 		return false;
 	}
 
-	if (pipe(pfds) < 0) {
-		perror("pipe()");
+	if (!sigalg) {
+		fprintf(stderr, "failed to create signature algorithm %d\n",
+			signature->type);
 		return false;
 	}
+
+	if (pipe(pfds) < 0) {
+		perror("pipe()");
+		goto err;
+	}
+
+	if (!signature_update(sigalg, signature->shdr->salt,
+			      sizeof signature->shdr->salt))
+		goto err;
 
 	pid = fork();
 	if (pid < 0) {
 		perror("fork()");
-		close(pfds[0]);
-		close(pfds[1]);
-		return false;
+		goto err;
 	}
 
 	if (pid == 0) {
@@ -252,27 +240,86 @@ static bool	process_hunk(char const *program,
 	}
 
 	close(pfds[0]);
-	for (len = 0; len < payload->mem.len;) {
-		unsigned char	buf[PROCESS_SIZE];
-		size_t		tlen = MIN(payload->mem.len - len, sizeof buf);
+	pfds[0] = -1;
+	for (len = 0; len < payload->mem.len && !payload->mem.stream->is_eos;) {
+		ssize_t		l;
 
 		/* \todo: implement decompressor */
-		memcpy(buf, payload->mem.data + len, tlen);
-		/* \todo: feed buf into signature checker */
+		l = tee(payload->mem.stream->fd, pfds[1],
+			payload->mem.len - len, SPLICE_F_MORE);
+		if (l == 0)
+			payload->mem.stream->is_eos = true;
+		else if (l < 0 && errno == EINTR) {
+			continue;
+		} else if (l < 0) {
+			perror("tee()");
+			break;
+		}
 
-		if (!write_all(pfds[1], buf, tlen))
+		if (!signature_pipein(sigalg, payload->mem.stream->fd, l))
 			break;
 
-		len += tlen;
+		len += l;
 	}
 	close(pfds[1]);
+	pfds[1] = -1;
 
-	/* \todo: verify signature */
+	if (len != payload->mem.len) {
+		fprintf(stderr, "failed to read all payload data (%zu < %zu)\n",
+			len, payload->mem.len);
+		goto err;
+	}
+
+	if (signature->mem.len) {
+		be32_t		tmp;
+		unsigned char	sig[MAX_SIGNATURE_SIZE];
+
+		if (!stream_data_read(signature->mem.stream,
+				      &tmp, sizeof tmp, false)) {
+			fprintf(stderr, "failed to read signature length\n");
+			goto err;
+		}
+
+		len = be32toh(tmp);
+		if (len > sizeof sig) {
+			fprintf(stderr, "signature too large (%zu)\n", len);
+			goto err;
+		}
+
+		if (!stream_data_read(signature->mem.stream, &sig, len, false)) {
+			fprintf(stderr, "failed to read signature\n");
+			goto err;
+		}
+
+		if (!signature_verify(sigalg, sig, len)) {
+			fprintf(stderr, "failed to verify signature\n");
+			goto err;
+		}
+
+	}
+
+	signature_free(sigalg);
 
 	wait(NULL);
 	/* \todo: evaluate exit code */
 
 	return true;
+
+err:
+	if (pfds[0] != -1)
+		close(pfds[0]);
+
+	if (pfds[1] != -1)
+		close(pfds[0]);
+
+	signature_free(sigalg);
+
+	if (pid != -1) {
+		kill(pid, SIGTERM);
+		waitpid(pid, NULL, 0);
+	}
+
+	return false;
 }
 
 int main(int argc, char *argv[])
@@ -302,9 +349,7 @@ int main(int argc, char *argv[])
 	if (!stream_data_open(&stream, 0))
 		return EX_OSERR;
 
-	close(0);
-
-	if (!stream_data_read(&stream, &hdr, sizeof hdr))
+	if (!stream_data_read(&stream, &hdr, sizeof hdr, false))
 		return EX_DATAERR;
 
 	if (be32toh(hdr.magic) != STREAM_HEADER_MAGIC) {
@@ -312,29 +357,30 @@ int main(int argc, char *argv[])
 		return EX_DATAERR;
 	}
 
-	while (!stream_data_eof(&stream)) {
+	for (;;) {
 		struct stream_hunk_header	hhdr;
 		struct memory_block_data	payload;
 		struct memory_block_signature	signature;
 
-		if (!stream_data_read(&stream, &hhdr, sizeof hhdr))
+		if (!stream_data_read(&stream, &hhdr, sizeof hhdr, true))
 			return EX_DATAERR;
 
-		payload.mem.len    = be32toh(hhdr.hunk_len);
-		signature.mem.len  = be32toh(hhdr.sign_len);
-		payload.mem.data   = stream_data_get(&stream, payload.mem.len);
-		signature.mem.data = stream_data_get(&stream, signature.mem.len);
+		if (stream.is_eos)
+			break;
 
-		if (!payload.mem.data || !signature.mem.data)
-			return EX_DATAERR;
+		payload.mem.stream   = &stream;
+		payload.mem.len      = be32toh(hhdr.hunk_len);
+		payload.mem.data     = NULL;
+		payload.type         = be32toh(hhdr.type);
+		payload.compression  = hhdr.compress_type;
+		payload.len          = be32toh(hhdr.decompress_len);
 
-		payload.type = be32toh(hhdr.type);
-		payload.compression = hhdr.compress_type;
-		payload.len = be32toh(hhdr.decompress_len);
-
-		signature.type = hhdr.sign_type;
-		signature.shdr = &hdr;
-		signature.hhdr = &hhdr;
+		signature.mem.stream = &stream;
+		signature.mem.len    = be32toh(hhdr.fixed_sign_len);
+		signature.mem.data   = NULL;
+		signature.type       = hhdr.sign_type;
+		signature.shdr       = &hdr;
+		signature.hhdr       = &hhdr;
 
 		if (!process_hunk(program, &payload, &signature))
 			return EX_DATAERR;

@@ -18,17 +18,79 @@
 #define H_ENSC_STREAMGEN_SIGNATURE_H
 
 #include <stdlib.h>
+#include <stdbool.h>
+
+/* \todo: move this part into a common header */
+#include <stdint.h>
+#include <stddef.h>
+#define container_of(_ptr, _type, _attr) __extension__		\
+	({								\
+		__typeof__( ((_type *)0)->_attr) *_tmp_mptr = (_ptr);	\
+		(_type *)((uintptr_t)_tmp_mptr - offsetof(_type, _attr)); \
+	})
+
 
 struct signature_algorithm {
-	int		(*reset)(struct signature_algorithm *alg);
-	void		(*update)(struct signature_algorithm *alg,
+	bool		(*reset)(struct signature_algorithm *alg);
+	bool		(*update)(struct signature_algorithm *alg,
 				  void const *data, size_t len);
-	size_t		(*length)(struct signature_algorithm const *alg);
-	void		(*finish)(struct signature_algorithm *alg, void *dst);
-
+	bool		(*pipein)(struct signature_algorithm *alg,
+				  int fd, size_t len);
+	bool		(*finish)(struct signature_algorithm *alg, 
+				  void const **dst, size_t *len);
+	bool		(*verify)(struct signature_algorithm *alg,
+				  void const *sig, size_t len);
 	void		(*free)(struct signature_algorithm *alg);
 };
 
+inline static bool signature_reset(struct signature_algorithm *alg)
+{
+	return alg->reset(alg);
+}
+
+inline static bool signature_update(struct signature_algorithm *alg,
+				    void const *data, size_t len)
+{
+	return alg->update(alg, data, len);
+}
+
+bool _signature_pipein(struct signature_algorithm *alg, int fd, size_t len);
+
+inline static bool signature_pipein(struct signature_algorithm *alg,
+				    int fd, size_t len)
+{
+	if (alg->pipein)
+		return alg->pipein(alg, fd, len);
+	else
+		return _signature_pipein(alg, fd, len);
+}
+
+inline static bool signature_finish(struct signature_algorithm *alg, 
+				    void const **dst, size_t *len)
+{
+	return alg->finish(alg, dst, len);
+}
+
+bool _signature_verify(struct signature_algorithm *alg, void const *sig, 
+		       size_t len);
+
+inline static bool signature_verify(struct signature_algorithm *alg, 
+				    void const *sig, size_t len)
+{
+	if (alg->verify)
+		return alg->verify(alg, sig, len);
+	else
+		return _signature_verify(alg, sig, len);
+}
+
+inline static void signature_free(struct signature_algorithm *alg)
+{
+	if (alg)
+		alg->free(alg);
+}
+
+
+struct signature_algorithm *	signature_algorithm_none_create(void);
 struct signature_algorithm *	signature_algorithm_md5_create(void);
 struct signature_algorithm *	signature_algorithm_sha1_create(void);
 struct signature_algorithm *	signature_algorithm_sha256_create(void);
