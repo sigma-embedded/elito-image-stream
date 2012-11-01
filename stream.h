@@ -33,6 +33,7 @@ enum stream_signature {
 	STREAM_SIGNATURE_SHA256,
 	STREAM_SIGNATURE_SHA512,
 	STREAM_SIGNATURE_GPG,
+	STREAM_SIGNATURE_X509,
 };
 
 enum stream_compression {
@@ -60,8 +61,8 @@ struct stream_hunk_header {
 	be32_t		hunk_len;
 	be32_t		decompress_len;
 	be32_t		fixed_sign_len;
+	be32_t		prefix_len;
 
-	be32_t		_unused2;
 	be32_t		_unused3;
 	be32_t		_unused4;
 } __packed;

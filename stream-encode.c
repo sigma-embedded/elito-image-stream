@@ -75,7 +75,8 @@ static struct {
 	{ "md5",    STREAM_SIGNATURE_MD5,  signature_algorithm_md5_create },
 	{ "sha1",   STREAM_SIGNATURE_SHA1, signature_algorithm_sha1_create },
 	{ "sha256", STREAM_SIGNATURE_SHA256, signature_algorithm_sha256_create },
-	{ "sha512", STREAM_SIGNATURE_SHA256, signature_algorithm_sha512_create },
+	{ "sha512", STREAM_SIGNATURE_SHA512, signature_algorithm_sha512_create },
+	{ "x509",   STREAM_SIGNATURE_X509,   signature_algorithm_x509_create },
 //	{ "gpg",    STREAM_SIGNATURE_GPG },
 };
 
@@ -95,10 +96,8 @@ static bool parse_signature(enum stream_signature *sig,
 {
 	size_t		i;
 
-	if (*alg) {
-		(*alg)->free(*alg);
-		*alg = NULL;
-	}
+	signature_free(*alg);
+	*alg = NULL;
 
 	for (i = 0; i < ARRAY_SIZE(SIGNATURE_ALGORITHMS); ++i) {
 		if (strcmp(str, SIGNATURE_ALGORITHMS[i].id) != 0)
@@ -180,8 +179,23 @@ static char const *parse_hunk_opts(struct hunk *hunk, char const *opt)
 		return next;
 	}
 
-	fprintf(stderr, "unsupported option '%s'\n", key);
-	return NULL;
+	switch (signature_setopt(hunk->sig_alg, key, val, 0)) {
+	case SIGNATURE_SETOPT_SUCCESS:
+		return next;
+
+	case SIGNATURE_SETOPT_NOOPT:
+		fprintf(stderr, "unsupported option '%s' with value '%s'\n",
+			key, val);
+		return NULL;
+
+	case SIGNATURE_SETOPT_ERROR:
+		fprintf(stderr, "failed to set option '%s' with value '%s'\n",
+			key, val);
+		return NULL;
+
+	default:
+		abort();
+	}
 }
 
 static bool register_hunk(char const *desc, struct hunk **hunks,
@@ -291,14 +305,22 @@ static bool	dump_hunk(int ofd, struct hunk const *hunk,
 		goto out;
 	}
 
+	if (!signature_reset(sig_alg))
+		goto out;
+
+	if (!signature_begin(sig_alg, &sig_buf, &sig_len))
+		goto out;
+
 	hdr.hunk_len = htobe32(st.st_size);
 	hdr.decompress_len = htobe32(st.st_size);
+	hdr.prefix_len = htobe32(sig_len);
 
-	signature_reset(sig_alg);
 	if (!signature_update(sig_alg, shdr->salt, sizeof shdr->salt))
 		goto out;
 
 	write_all(ofd, &hdr, sizeof hdr);
+	write_all(ofd, sig_buf, sig_len);
+
 	for (;;) {
 		unsigned char	buf[1024*1024];
 		ssize_t		l = read(hfd, buf, sizeof buf);
@@ -380,7 +402,13 @@ int main(int argc, char *argv[])
 
 	write_all(1, &hdr, sizeof hdr);
 	for (i = 0; i < num_hunks; ++i) {
+		signature_setstrength(hunks[i].sig_alg, 0);
+
 		if (!dump_hunk(1, &hunks[i], &hdr))
 			return EX_DATAERR;
+
+		signature_free(hunks[i].sig_alg);
 	}
+
+	free(hunks);
 }

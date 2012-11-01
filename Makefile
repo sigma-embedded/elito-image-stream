@@ -1,20 +1,31 @@
 CFLAGS = -D_FORTIFY_SOURCE=2 -O2 -g -Werror
 AM_CFLAGS = -std=gnu99 -Wall -W -Wno-missing-field-initializers -D_GNU_SOURCE \
  -Wno-unused-parameter
+AM_LDFLAGS = -Wl,-as-needed
 
 bin_PROGRAMS = stream-encode stream-decode
 
+DIGEST_PROVIDER = gnutls
+X509_PROVIDER = gnutls
+
+LIBS_gnutls = -lgnutls
+
+LIBS = $(LIBS_$(DIGEST_PROVIDER))
+
 stream-encode_SOURCES = \
 	stream-encode.c \
-	signature-kernel.c \
+	signature-$(DIGEST_PROVIDER).c \
+	x509-$(X509_PROVIDER).c \
 	signature-none.c \
 	signature.c \
+	signature.h \
 	stream.h \
 
 stream-decode_SOURCES = \
 	stream-decode.c \
 	stream.h \
-	signature-kernel.c \
+	signature-$(DIGEST_PROVIDER).c \
+	x509-$(X509_PROVIDER).c \
 	signature-none.c \
 	signature.c \
 	signature.h

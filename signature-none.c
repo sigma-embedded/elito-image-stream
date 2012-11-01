@@ -66,6 +66,7 @@ static void signature_none_free(struct signature_algorithm *alg)
 }
 
 static struct signature_algorithm	signature_none = {
+	.strength	=  0,
 	.reset		=  signature_none_reset,
 	.update		=  signature_none_update,
 	.pipein		=  signature_none_pipein,

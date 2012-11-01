@@ -43,6 +43,8 @@ bool _signature_pipein(struct signature_algorithm *alg, int fd, size_t len)
 			perror("read(<signature-pipe>)");
 			break;
 		}
+
+		alg->update(alg, buf, tlen);
 	}
 	
 	return len == 0;

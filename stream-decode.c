@@ -41,22 +41,39 @@
 #define CMD_HELP                0x1000
 #define CMD_VERSION             0x1001
 
+#define CMD_CAFILE		0x2000
+#define CMD_CRLFILE		0x2001
+
 #define MAX_SIGNATURE_SIZE	(1 * 1024 * 1024)
 
 #define PROCESS_SIZE	(1024*1024)
 
 static struct option const		CMDLINE_OPTIONS[] = {
-	{ "help",        no_argument,       0, CMD_HELP },
-	{ "version",     no_argument,       0, CMD_VERSION },
-	{ "execute",     required_argument, 0, 'x' },
-	{ "verify",      no_argument, 	    0, 'v' },
-	{ "gpg-key",     required_argument, 0, 'G' },
+	{ "help",         no_argument,       0, CMD_HELP },
+	{ "version",      no_argument,       0, CMD_VERSION },
+	{ "execute",      required_argument, 0, 'x' },
+	{ "verify",       no_argument, 	     0, 'v' },
+	{ "min-strength", required_argument, 0, 'S' },
+	{ "gpg-key",      required_argument, 0, 'G' },
+	{ "ca",           required_argument, 0, CMD_CAFILE },
+	{ "crl",          required_argument, 0, CMD_CRLFILE },
 	{ NULL, 0, 0, 0 }
 };
 
 struct stream_data {
 	int		fd;
 	bool		is_eos;
+};
+
+struct filename_list {
+	char const		**names;
+	size_t			num;
+};
+
+struct signature_options {
+	unsigned int		min_strength;
+	struct filename_list	ca_files;
+	struct filename_list	crl_files;
 };
 
 struct memory_block {
@@ -73,8 +90,11 @@ struct memory_block_data {
 };
 
 struct memory_block_signature {
+	struct memory_block	pre;
 	struct memory_block	mem;
 	enum stream_signature	type;
+
+	struct signature_options const	*opts;
 
 	struct stream_header const	*shdr;
 	struct stream_hunk_header const	*hhdr;
@@ -134,6 +154,133 @@ static bool	stream_data_read(struct stream_data *s, void *buf, size_t cnt,
 	return cnt == 0;
 }
 
+static bool set_signature_opts(struct signature_algorithm *sigalg,
+			       struct signature_options const *opts)
+{
+	size_t		i;
+
+	if (!signature_setstrength(sigalg, opts->min_strength)) {
+		fprintf(stderr, "signature algorithm not strong enough (%u < %u)\n",
+			sigalg->strength, opts->min_strength);
+		return false;
+	}
+
+	for (i = 0; i < opts->ca_files.num; ++i) {
+		switch (signature_setopt(sigalg, "ca", opts->ca_files.names[i], 0)) {
+		case SIGNATURE_SETOPT_SUCCESS:
+		case SIGNATURE_SETOPT_NOOPT:
+			break;
+
+		case SIGNATURE_SETOPT_ERROR:
+			fprintf(stderr, "failed to setup CA file '%s'\n",
+				opts->ca_files.names[i]);
+			return false;
+		}
+	}
+
+	for (i = 0; i < opts->crl_files.num; ++i) {
+		switch (signature_setopt(sigalg, "crl", opts->crl_files.names[i], 0)) {
+		case SIGNATURE_SETOPT_SUCCESS:
+		case SIGNATURE_SETOPT_NOOPT:
+			break;
+
+		case SIGNATURE_SETOPT_ERROR:
+			fprintf(stderr, "failed to setup CRL file '%s'\n",
+				opts->crl_files.names[i]);
+			return false;
+		}
+	}
+
+	return true;
+}
+
+static struct signature_algorithm *
+create_sigalg(struct memory_block_signature const *signature)
+{
+	struct signature_algorithm	*sigalg = NULL;
+
+	if ((signature->type != STREAM_SIGNATURE_NONE && signature->mem.len != ~0u) ||
+	    (signature->type == STREAM_SIGNATURE_NONE && signature->mem.len == ~0u)) {
+		fprintf(stderr, "bad signature length %zu\n",
+			signature->mem.len);
+		return false;
+	}
+
+	switch (signature->type) {
+	case STREAM_SIGNATURE_NONE:
+		sigalg = signature_algorithm_none_create();
+		break;
+
+	case STREAM_SIGNATURE_SHA1:
+		sigalg = signature_algorithm_sha1_create();
+		break;
+
+	case STREAM_SIGNATURE_SHA256:
+		sigalg = signature_algorithm_sha256_create();
+		break;
+
+	case STREAM_SIGNATURE_X509:
+		sigalg = signature_algorithm_x509_create();
+		break;
+
+	case STREAM_SIGNATURE_GPG:
+		/* \todo: implement me */
+		fprintf(stderr, "signature type %u not implemented yet\n",
+			signature->type);
+		return false;
+
+	default:
+		fprintf(stderr, "unknown signature type %u\n", signature->type);
+		return false;
+	}
+
+	if (!sigalg) {
+		fprintf(stderr, "failed to create signature algorithm %d\n",
+			signature->type);
+		return false;
+	}
+
+	if (!set_signature_opts(sigalg, signature->opts))
+		goto err;
+
+	if (signature->pre.len) {
+		unsigned char	sig[MAX_SIGNATURE_SIZE];
+
+		if (signature->pre.len > sizeof sig) {
+			fprintf(stderr, "signature prefix too large (%zu)\n",
+				signature->pre.len);
+			goto err;
+		}
+
+		if (!stream_data_read(signature->pre.stream, &sig,
+				      signature->pre.len, false)) {
+			fprintf(stderr, "failed to read signature\n");
+			goto err;
+		}
+
+		switch (signature_setopt(sigalg, "info-bin", sig, 
+					 signature->pre.len)) {
+		case SIGNATURE_SETOPT_SUCCESS:	
+			break;
+		case SIGNATURE_SETOPT_NOOPT:
+			fprintf(stderr, "signature prefix not supported\n");
+			goto err;
+		case SIGNATURE_SETOPT_ERROR:
+			fprintf(stderr, "failed to register signature prefix\n");
+			goto err;
+		}
+	}
+
+	if (!signature_reset(sigalg))
+		goto err;
+
+	return sigalg;
+
+err:
+	signature_free(sigalg);
+	return NULL;
+}
+
 static bool	process_hunk(char const *program,
 			     struct memory_block_data const *payload,
 			     struct memory_block_signature const *signature)
@@ -166,42 +313,9 @@ static bool	process_hunk(char const *program,
 		return false;
 	}
 
-	if ((signature->type != STREAM_SIGNATURE_NONE && signature->mem.len != ~0u) ||
-	    (signature->type == STREAM_SIGNATURE_NONE && signature->mem.len == ~0u)) {
-		fprintf(stderr, "bad signature length %zu\n",
-			signature->mem.len);
-		return false;
-	}
-
-	switch (signature->type) {
-	case STREAM_SIGNATURE_NONE:
-		sigalg = signature_algorithm_none_create();
-		break;
-
-	case STREAM_SIGNATURE_SHA1:
-		sigalg = signature_algorithm_sha1_create();
-		break;
-
-	case STREAM_SIGNATURE_SHA256:
-		sigalg = signature_algorithm_sha256_create();
-		break;
-
-	case STREAM_SIGNATURE_GPG:
-		/* \todo: implement me */
-		fprintf(stderr, "signature type %u not implemented yet\n",
-			signature->type);
-		return false;
-
-	default:
-		fprintf(stderr, "unknown signature type %u\n", signature->type);
-		return false;
-	}
-
-	if (!sigalg) {
-		fprintf(stderr, "failed to create signature algorithm %d\n",
-			signature->type);
-		return false;
-	}
+	sigalg = create_sigalg(signature);
+	if (!sigalg)
+		goto err;
 
 	if (pipe(pfds) < 0) {
 		perror("pipe()");
@@ -221,6 +335,11 @@ static bool	process_hunk(char const *program,
 	if (pid == 0) {
 		char	size_str[sizeof(size_t)*3 + 2];
 		char	type_str[sizeof(unsigned int)*3 + 2];
+
+		if (!signature_setenv(sigalg)) {
+			fprintf(stderr, "failed to export signature details\n");
+			_exit(1);
+		}
 
 		close(pfds[1]);
 		if (dup2(pfds[0], 0) < 0) {
@@ -295,7 +414,6 @@ static bool	process_hunk(char const *program,
 			fprintf(stderr, "failed to verify signature\n");
 			goto err;
 		}
-
 	}
 
 	signature_free(sigalg);
@@ -322,14 +440,33 @@ err:
 	return false;
 }
 
+static bool add_filename(struct filename_list *lst, char const *fname)
+{
+	char const	**new_names;
+
+	new_names = realloc(lst->names, sizeof lst->names[0] * (lst->num + 1));
+	if (!new_names) {
+		perror("realloc(<filename-lst>)");
+		return false;
+	}
+
+	new_names[lst->num] = fname;
+	lst->names = new_names;
+	lst->num  += 1;
+	return true;
+}
+
 int main(int argc, char *argv[])
 {
 	struct stream_data	stream;
 	struct stream_header	hdr;
 	char const		*program = "/bin/false";
+	struct signature_options sigopts = {
+		.min_strength	=  0,
+	};
 
 	while (1) {
-		int         c = getopt_long(argc, argv, "x:",
+		int         c = getopt_long(argc, argv, "vx:S:",
 					    CMDLINE_OPTIONS, NULL);
 
 		if (c==-1)
@@ -339,7 +476,19 @@ int main(int argc, char *argv[])
 		case CMD_HELP     :  show_help();
 		case CMD_VERSION  :  show_version();
 		case 'x' :  program = optarg; break;
-		case 'v' :  break;		/* \todo: implement verify */
+		case 'v' :  sigopts.min_strength = 1; break;
+		case 'S':   sigopts.min_strength = atoi(optarg); break;
+
+		case CMD_CAFILE:
+			if (!add_filename(&sigopts.ca_files, optarg))
+				return EX_OSERR;
+			break;
+
+		case CMD_CRLFILE:
+			if (!add_filename(&sigopts.crl_files, optarg))
+				return EX_OSERR;
+			break;
+
 		default:
 			fprintf(stderr, "Try --help for more information\n");
 			return EX_USAGE;
@@ -375,6 +524,10 @@ int main(int argc, char *argv[])
 		payload.compression  = hhdr.compress_type;
 		payload.len          = be32toh(hhdr.decompress_len);
 
+		signature.opts       = &sigopts;
+		signature.pre.stream = &stream;
+		signature.pre.len    = be32toh(hhdr.prefix_len);
+		signature.pre.data   = NULL;
 		signature.mem.stream = &stream;
 		signature.mem.len    = be32toh(hhdr.fixed_sign_len);
 		signature.mem.data   = NULL;
@@ -387,4 +540,7 @@ int main(int argc, char *argv[])
 	}
 
 	stream_data_close(&stream);
+
+	free(sigopts.ca_files.names);
+	free(sigopts.crl_files.names);
 }

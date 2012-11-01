@@ -30,17 +30,33 @@
 	})
 
 
+enum signature_setopt_result {
+	SIGNATURE_SETOPT_SUCCESS = 23,
+	SIGNATURE_SETOPT_NOOPT,
+	SIGNATURE_SETOPT_ERROR
+};
+	
 struct signature_algorithm {
+	unsigned int	strength;
+
 	bool		(*reset)(struct signature_algorithm *alg);
 	bool		(*update)(struct signature_algorithm *alg,
 				  void const *data, size_t len);
 	bool		(*pipein)(struct signature_algorithm *alg,
 				  int fd, size_t len);
+	bool		(*begin)(struct signature_algorithm *alg, 
+				 void const **dst, size_t *len);
 	bool		(*finish)(struct signature_algorithm *alg, 
 				  void const **dst, size_t *len);
 	bool		(*verify)(struct signature_algorithm *alg,
 				  void const *sig, size_t len);
+	enum signature_setopt_result (*setopt)(struct signature_algorithm *alg,
+					       char const *key, 
+					       void const *val, size_t val_len);
+	bool		(*setenv)(struct signature_algorithm *alg);
 	void		(*free)(struct signature_algorithm *alg);
+	bool		(*setstrength)(struct signature_algorithm *alg,
+				       unsigned int strength);
 };
 
 inline static bool signature_reset(struct signature_algorithm *alg)
@@ -65,6 +81,26 @@ inline static bool signature_pipein(struct signature_algorithm *alg,
 		return _signature_pipein(alg, fd, len);
 }
 
+inline static bool signature_begin(struct signature_algorithm *alg, 
+				   void const **dst, size_t *len)
+{
+	if (alg->begin) {
+		return alg->begin(alg, dst, len);
+	} else {
+		*dst = NULL;
+		*len = 0;
+		return true;
+	}
+}
+
+inline static bool signature_setenv(struct signature_algorithm *alg)
+{
+	if (alg->setenv)
+		return alg->setenv(alg);
+	else
+		return true;
+}
+
 inline static bool signature_finish(struct signature_algorithm *alg, 
 				    void const **dst, size_t *len)
 {
@@ -83,10 +119,29 @@ inline static bool signature_verify(struct signature_algorithm *alg,
 		return _signature_verify(alg, sig, len);
 }
 
+inline static enum signature_setopt_result
+signature_setopt(struct signature_algorithm *alg,
+		 char const *key, void const *val, size_t val_len)
+{
+	if (alg->setopt)
+		return alg->setopt(alg, key, val, val_len);
+	else
+		return SIGNATURE_SETOPT_NOOPT;
+}
+
 inline static void signature_free(struct signature_algorithm *alg)
 {
 	if (alg)
 		alg->free(alg);
+}
+
+inline static bool signature_setstrength(struct signature_algorithm *alg,
+					 unsigned int strength)
+{
+	if (alg->setstrength)
+		return alg->setstrength(alg, strength);
+	else
+		return strength <= alg->strength;
 }
 
 
@@ -95,6 +150,7 @@ struct signature_algorithm *	signature_algorithm_md5_create(void);
 struct signature_algorithm *	signature_algorithm_sha1_create(void);
 struct signature_algorithm *	signature_algorithm_sha256_create(void);
 struct signature_algorithm *	signature_algorithm_sha512_create(void);
+struct signature_algorithm *	signature_algorithm_x509_create(void);
 struct signature_algorithm *	signature_algorithm_gpg_create(void);
 
 

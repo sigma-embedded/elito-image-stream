@@ -185,11 +185,12 @@ struct signature_algorithm *	signature_kernel_create(char const *hname,
 		goto err;
 	}
 
-	kalg->alg.reset  = signature_kernel_reset;
-	kalg->alg.update = signature_kernel_update;
-	kalg->alg.pipein = signature_kernel_pipein;
-	kalg->alg.finish = signature_kernel_finish;
-	kalg->alg.free   = signature_kernel_free;
+	kalg->alg.strength = 10;
+	kalg->alg.reset    = signature_kernel_reset;
+	kalg->alg.update   = signature_kernel_update;
+	kalg->alg.pipein   = signature_kernel_pipein;
+	kalg->alg.finish   = signature_kernel_finish;
+	kalg->alg.free     = signature_kernel_free;
 
 	return &kalg->alg;
 
