@@ -281,50 +281,135 @@ err:
 	return NULL;
 }
 
-static bool	process_hunk(char const *program,
-			     struct memory_block_data const *payload,
-			     struct memory_block_signature const *signature)
+static bool	finish_stream(char const *program,
+			      struct memory_block_data const *payload,
+			      struct signature_algorithm *sigalg)
+{
+	pid_t		pid = -1;
+	int		status;
+
+	pid = fork();
+	if (pid < 0) {
+		perror("fork()");
+		goto err;
+	}
+
+	if (pid == 0) {
+		int		fd_null;
+		char		size_str[sizeof(size_t)*3 + 2];
+		char		type_str[sizeof(unsigned int)*3 + 2];
+
+		if (!signature_setenv(sigalg)) {
+			fprintf(stderr, "failed to export signature details\n");
+			_exit(1);
+		}
+
+		close(0);
+		fd_null = open("/dev/null", O_RDONLY|O_NOCTTY);
+		if (fd_null < 0) {
+			perror("open(/dev/null)");
+			goto err;
+		} else if (fd_null != 0) {
+			fprintf(stderr, "failed to redirect stdin\n");
+			goto err;
+		}
+		
+		sprintf(size_str, "%zu", payload->len);
+		sprintf(type_str, "%u", payload->type);
+
+		execlp(program, program, "finish", type_str, size_str, NULL);
+		perror("execlp()");
+		_exit(1);
+	}
+
+	if (TEMP_FAILURE_RETRY(waitpid(pid, &status, 0)) < 0) {
+		perror("waitpid()");
+		goto err;
+	}
+
+	pid = -1;
+
+	if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+		fprintf(stderr, "program failed with %d\n", status);
+		goto err;
+	}
+
+	return true;
+
+err:
+	if (pid != -1) {
+		kill(pid, SIGTERM);
+		waitpid(pid, NULL, 0);
+	}
+
+	return false;
+}
+
+static bool stage_transaction(char const *program, char const *stage)
+{
+	pid_t		pid = -1;
+	int		status;
+
+	pid = fork();
+	if (pid < 0) {
+		perror("fork()");
+		goto err;
+	}
+
+	if (pid == 0) {
+		int		fd_null;
+
+		close(0);
+		fd_null = open("/dev/null", O_RDONLY|O_NOCTTY);
+		if (fd_null < 0) {
+			perror("open(/dev/null)");
+			goto err;
+		} else if (fd_null != 0) {
+			fprintf(stderr, "failed to redirect stdin\n");
+			goto err;
+		}
+		
+		execlp(program, program, stage, "0", "0", NULL);
+		perror("execlp()");
+		_exit(1);
+	}
+
+	if (TEMP_FAILURE_RETRY(waitpid(pid, &status, 0)) < 0) {
+		perror("waitpid()");
+		goto err;
+	}
+
+	pid = -1;
+
+	if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+		fprintf(stderr, "program failed with %d\n", status);
+		goto err;
+	}
+
+	return true;
+
+err:
+	if (pid != -1) {
+		kill(pid, SIGTERM);
+		waitpid(pid, NULL, 0);
+	}
+
+	return false;
+}
+
+static bool	send_stream(char const *program,
+			    struct memory_block_data const *payload,
+			    struct signature_algorithm *sigalg)
 {
 	size_t				len;
 	pid_t				pid = -1;
 	int				pfds[2] = { -1, -1 };
-	struct signature_algorithm	*sigalg = NULL;
-
-	switch (payload->compression) {
-	case STREAM_COMPRESS_NONE:
-		if (payload->len != payload->mem.len) {
-			fprintf(stderr,
-				"compression len mismatch (%zu vs. %zu)\n",
-				payload->len, payload->mem.len);
-			return false;
-		}
-		break;
-
-	case STREAM_COMPRESS_GZIP:
-	case STREAM_COMPRESS_XZ:
-		/* \todo: implement me */
-		fprintf(stderr, "compression mode %u not implemented yet\n",
-			payload->compression);
-		return false;
-
-	default:
-		fprintf(stderr, "unknown compression mode %u\n",
-			payload->compression);
-		return false;
-	}
-
-	sigalg = create_sigalg(signature);
-	if (!sigalg)
-		goto err;
+	int				status;
 
 	if (pipe(pfds) < 0) {
 		perror("pipe()");
 		goto err;
 	}
-
-	if (!signature_update(sigalg, signature->shdr->salt,
-			      sizeof signature->shdr->salt))
-		goto err;
 
 	pid = fork();
 	if (pid < 0) {
@@ -353,7 +438,7 @@ static bool	process_hunk(char const *program,
 		sprintf(size_str, "%zu", payload->len);
 		sprintf(type_str, "%u", payload->type);
 
-		execlp(program, program, type_str, size_str, NULL);
+		execlp(program, program, "stream", type_str, size_str, NULL);
 		perror("execlp()");
 		_exit(1);
 	}
@@ -389,37 +474,17 @@ static bool	process_hunk(char const *program,
 		goto err;
 	}
 
-	if (signature->mem.len) {
-		be32_t		tmp;
-		unsigned char	sig[MAX_SIGNATURE_SIZE];
-
-		if (!stream_data_read(signature->mem.stream,
-				      &tmp, sizeof tmp, false)) {
-			fprintf(stderr, "failed to read signature length\n");
-			goto err;
-		}
-
-		len = be32toh(tmp);
-		if (len > sizeof sig) {
-			fprintf(stderr, "signature too large (%zu)\n", len);
-			goto err;
-		}
-
-		if (!stream_data_read(signature->mem.stream, &sig, len, false)) {
-			fprintf(stderr, "failed to read signature\n");
-			goto err;
-		}
-
-		if (!signature_verify(sigalg, sig, len)) {
-			fprintf(stderr, "failed to verify signature\n");
-			goto err;
-		}
+	if (waitpid(pid, &status, 0) < 0) {
+		perror("waitpid()");
+		goto err;
 	}
 
-	signature_free(sigalg);
+	pid = -1;
 
-	wait(NULL);
-	/* \todo: evaluate exit code */
+	if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+		fprintf(stderr, "program failed with %d\n", status);
+		goto err;
+	}
 
 	return true;
 
@@ -430,12 +495,98 @@ err:
 	if (pfds[1] != -1)
 		close(pfds[0]);
 
-	signature_free(sigalg);
-
 	if (pid != -1) {
 		kill(pid, SIGTERM);
 		waitpid(pid, NULL, 0);
 	}
+
+	return false;
+}
+
+static bool	verify_signature(struct memory_block_signature const *signature,
+				 struct signature_algorithm	*sigalg)
+{
+	be32_t		tmp;
+	size_t		len;
+	unsigned char	sig[MAX_SIGNATURE_SIZE];
+
+	if (!stream_data_read(signature->mem.stream,
+			      &tmp, sizeof tmp, false)) {
+		fprintf(stderr, "failed to read signature length\n");
+		return false;
+	}
+
+	len = be32toh(tmp);
+	if (len > sizeof sig) {
+		fprintf(stderr, "signature too large (%zu)\n", len);
+		return false;
+	}
+
+	if (!stream_data_read(signature->mem.stream, &sig, len, false)) {
+		fprintf(stderr, "failed to read signature\n");
+		return false;
+	}
+
+	if (!signature_verify(sigalg, sig, len)) {
+		fprintf(stderr, "failed to verify signature\n");
+		return false;
+	}
+
+	return true;
+}
+
+static bool	process_hunk(char const *program,
+			     struct memory_block_data const *payload,
+			     struct memory_block_signature const *signature)
+{
+	struct signature_algorithm	*sigalg = NULL;
+
+	switch (payload->compression) {
+	case STREAM_COMPRESS_NONE:
+		if (payload->len != payload->mem.len) {
+			fprintf(stderr,
+				"compression len mismatch (%zu vs. %zu)\n",
+				payload->len, payload->mem.len);
+			return false;
+		}
+		break;
+
+	case STREAM_COMPRESS_GZIP:
+	case STREAM_COMPRESS_XZ:
+		/* \todo: implement me */
+		fprintf(stderr, "compression mode %u not implemented yet\n",
+			payload->compression);
+		return false;
+
+	default:
+		fprintf(stderr, "unknown compression mode %u\n",
+			payload->compression);
+		return false;
+	}
+
+	sigalg = create_sigalg(signature);
+	if (!sigalg)
+		goto err;
+
+	if (!signature_update(sigalg, signature->shdr->salt,
+			      sizeof signature->shdr->salt))
+		goto err;
+
+	if (!send_stream(program, payload, sigalg))
+		goto err;
+
+	if (signature->mem.len && !verify_signature(signature, sigalg))
+		goto err;
+
+	if (!finish_stream(program, payload, sigalg))
+		goto err;
+
+	signature_free(sigalg);
+
+	return true;
+
+err:
+	signature_free(sigalg);
 
 	return false;
 }
@@ -506,6 +657,9 @@ int main(int argc, char *argv[])
 		return EX_DATAERR;
 	}
 
+	if (!stage_transaction(program, "start"))
+		return EX_OSERR;
+
 	for (;;) {
 		struct stream_hunk_header	hhdr;
 		struct memory_block_data	payload;
@@ -543,4 +697,7 @@ int main(int argc, char *argv[])
 
 	free(sigopts.ca_files.names);
 	free(sigopts.crl_files.names);
+
+	if (!stage_transaction(program, "end"))
+		return EX_OSERR;
 }
