@@ -317,7 +317,8 @@ static bool	dump_hunk(int ofd, struct hunk const *hunk,
 	hdr.decompress_len = htobe32(st.st_size);
 	hdr.prefix_len = htobe32(sig_len);
 
-	if (!signature_update(sig_alg, shdr->salt, sizeof shdr->salt))
+	if (!signature_update(sig_alg, shdr->salt, sizeof shdr->salt) ||
+	    !signature_update(sig_alg, &hdr.type, sizeof hdr.type))
 		goto out;
 
 	write_all(ofd, &hdr, sizeof hdr);

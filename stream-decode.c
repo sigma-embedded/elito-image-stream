@@ -569,7 +569,9 @@ static bool	process_hunk(char const *program,
 		goto err;
 
 	if (!signature_update(sigalg, signature->shdr->salt,
-			      sizeof signature->shdr->salt))
+			      sizeof signature->shdr->salt) ||
+	    !signature_update(sigalg, &signature->hhdr->type,
+			      sizeof signature->hhdr->type))
 		goto err;
 
 	if (!send_stream(program, payload, sigalg))
