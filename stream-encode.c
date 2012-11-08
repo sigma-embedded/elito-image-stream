@@ -72,9 +72,9 @@ static struct {
 	enum stream_signature	signature;
 	struct signature_algorithm *(*generator)(void);
 } const			SIGNATURE_ALGORITHMS[] = {
-	{ "none",   STREAM_SIGNATURE_NONE, signature_algorithm_none_create },
-	{ "md5",    STREAM_SIGNATURE_MD5,  signature_algorithm_md5_create },
-	{ "sha1",   STREAM_SIGNATURE_SHA1, signature_algorithm_sha1_create },
+	{ "none",   STREAM_SIGNATURE_NONE,   signature_algorithm_none_create },
+	{ "md5",    STREAM_SIGNATURE_MD5,    signature_algorithm_md5_create },
+	{ "sha1",   STREAM_SIGNATURE_SHA1,   signature_algorithm_sha1_create },
 	{ "sha256", STREAM_SIGNATURE_SHA256, signature_algorithm_sha256_create },
 	{ "sha512", STREAM_SIGNATURE_SHA512, signature_algorithm_sha512_create },
 	{ "x509",   STREAM_SIGNATURE_X509,   signature_algorithm_x509_create },
