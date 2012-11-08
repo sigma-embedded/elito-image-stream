@@ -7,6 +7,7 @@ bin_PROGRAMS = stream-encode stream-decode
 
 DIGEST_PROVIDER = gnutls
 X509_PROVIDER = gnutls
+COMPRESSION_PROVIDER = noop
 
 LIBS_gnutls = -lgnutls
 
@@ -16,6 +17,7 @@ stream-encode_SOURCES = \
 	stream-encode.c \
 	signature-$(DIGEST_PROVIDER).c \
 	x509-$(X509_PROVIDER).c \
+	compression-$(COMPRESSION_PROVIDER).c \
 	signature-none.c \
 	signature.c \
 	signature.h \

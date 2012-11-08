@@ -34,6 +34,7 @@
 #include <sys/stat.h>
 
 #include "signature.h"
+#include "compression.h"
 
 #define CMD_HELP                0x1000
 #define CMD_VERSION             0x1001
@@ -83,9 +84,10 @@ static struct {
 static struct {
 	char const		*id;
 	enum stream_compression	compression;
+	struct compression_algorithm *(*generator)(void);
 } const			COMPRESSION_ALGORITHMS[] = {
-	{ "gzip",   STREAM_COMPRESS_GZIP },
-	{ "xz",     STREAM_COMPRESS_XZ },
+	{ "gzip",   STREAM_COMPRESS_GZIP, compression_algorithm_gzip_create },
+	{ "xz",     STREAM_COMPRESS_XZ,   compression_algorithm_xz_create },
 };
 
 #define ARRAY_SIZE(_a)	(sizeof(_a) / sizeof(_a)[0])
