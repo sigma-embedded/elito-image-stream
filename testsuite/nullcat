@@ -1,0 +1,10 @@
+#! /bin/sh
+
+set -e
+
+case $1 in
+  start|end)	touch ${O}"$1" ;;
+  stream)	cat > ${O}result.tmp ;;
+  finish)	mv ${O}result.tmp ${O}result ;;
+  *)		echo "Invalid op '$1'" >&2; exit 1;;
+esac
