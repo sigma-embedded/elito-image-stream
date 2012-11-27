@@ -52,6 +52,7 @@ _exec() {
     case $prog in
       -*)	prog=${prog##-}; SKIP_POST=true; fn=_exp_fail ;;
       ~*)	prog=${prog##~}; SKIP_POST=true; fn=_exp_ignore ;;
+      !*)	prog=${prog##!}; GREMLIN=true;   fn=_exp_success ;;
       *)	fn=_exp_success ;;
     esac
 
@@ -127,9 +128,12 @@ for encoder in $ENCODERS; do
 	rm -f "$tmpdir"/*
 
 	STDIN=
+	GREMLIN=false
 	start "Creating stream of '$infile' with '$encoder'"
 	runit $encoder -h "$ENCODEOPTS"=$infile 3> $tmpdir/stream
 	ok
+
+	! $GREMLIN || bin/gremlin $tmpdir/stream
 
 	STDIN=$tmpdir/stream
 	for decoder in $DECODERS; do

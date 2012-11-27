@@ -13,7 +13,7 @@ endef
 
 $(foreach d,$(DIGEST_PROVIDERS),$(foreach x,$(X509_PROVIDERS),$(eval $(call init_variant,$d,$x))))
 
-build:	$(ENCODERS) $(DECODERS) bin/gen-input
+build:	$(ENCODERS) $(DECODERS) bin/gen-input bin/gremlin
 
-bin/gen-input:	gen-input.c | bin
+bin/%:	%.c | bin
 	$(HOST_CC) $(HOST_CFLAGS) $< -o $@

@@ -1,10 +1,19 @@
 I := $(STREAM_TMPDIR)
 R  = runtest.sh
 
-_genprog = $(if $(patsubst -%,,$2),,-)$1$(patsubst -%,%,$2)
+_genprog = \
+$(if $(patsubst -%,,$2),\
+$(if $(patsubst !%,,$2),\
+$(if $(patsubst ~%,,$2),\
+$1$2,\
+~$1$(patsubst ~%,%,$2)),\
+!$1$(patsubst !%,%,$2)),\
+-$1$(patsubst -%,%,$2))\
+
+
 genprog = $(strip $(foreach p,$2, $(call _genprog,$1,$p)))
 
-run = @env BASE_ID=$(strip $1) bash $R \
+run = env BASE_ID=$(strip $1) bash $R \
   '$(call genprog,bin/stream-encode_,$2)' \
   '$(call genprog,bin/stream-decode_,$3)' \
   '$(addsuffix .in,$(addprefix $(STREAM_TMPDIR)/,$4))' \
@@ -50,6 +59,12 @@ tests:
 	$(call run, 200, \
 	       kernel-gnutls gnutls-gnutls, \
 	       kernel-gnutls gnutls-gnutls, \
+	       zero-0 zero-1 zero-65536 rnd-65536 rnd-5242880, \
+	       '$(E_1)' '$(D_0)')
+
+	$(call run, 250, \
+	       !kernel-gnutls !gnutls-gnutls, \
+	       -kernel-gnutls -gnutls-gnutls, \
 	       zero-0 zero-1 zero-65536 rnd-65536 rnd-5242880, \
 	       '$(E_1)' '$(D_0)')
 
