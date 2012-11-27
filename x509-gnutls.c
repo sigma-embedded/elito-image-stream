@@ -31,6 +31,7 @@
 #include <gnutls/x509.h>
 #include <gnutls/abstract.h>
 
+#include "util.h"
 #include "stream.h"
 #include "signature.h"
 
@@ -65,6 +66,9 @@ struct x509_gnutls {
 
 	bool				skip_verify;
 	bool				skip_purpose;
+
+	enum stream_signature		signature_type;
+	bool				signature_type_valid;
 };
 #define tox509(_alg)	\
 	container_of(_alg, struct x509_gnutls, alg)
@@ -175,7 +179,7 @@ static bool x509_gnutls_load_crt(char const *filename,
 	if (!x509_gnutls_mmap(filename, &data))
 		rc = false;
 	else {
-		rc = x509_gnutls_load_crt_from_mem(&data, crt, pubkey, 
+		rc = x509_gnutls_load_crt_from_mem(&data, crt, pubkey,
 						   GNUTLS_X509_FMT_PEM);
 		munmap(data.data, data.size);
 	}
@@ -363,16 +367,65 @@ static bool x509_gnutls_add_ca(struct x509_gnutls *x509, char const *ca_file)
 static bool x509_gnutls_set_crt(struct x509_gnutls *x509,
 				char const *crt_file)
 {
-	return x509_gnutls_load_crt(crt_file, &x509->crt, &x509->pubkey);
+	gnutls_digest_algorithm_t	hash_alg;
+	unsigned int			hash_mand;
+	bool				rc;
+	int				r;
+
+	rc = x509_gnutls_load_crt(crt_file, &x509->crt, &x509->pubkey);
+
+	if (!rc)
+		return false;
+
+	r = gnutls_pubkey_get_preferred_hash_algorithm(x509->pubkey,
+						       &hash_alg,
+						       &hash_mand);
+	if (r < 0) {
+		x509_perror("gnutls_pubkey_get_preferred_hash_algorithm()", r);
+		return false;
+	}
+
+	switch (hash_alg) {
+	case GNUTLS_DIG_MD5:
+		x509->signature_type = STREAM_SIGNATURE_MD5;
+		break;
+
+	case GNUTLS_DIG_SHA1:
+		x509->signature_type = STREAM_SIGNATURE_SHA1;
+		break;
+
+	case GNUTLS_DIG_SHA256:
+		x509->signature_type = STREAM_SIGNATURE_SHA256;
+		break;
+
+	case GNUTLS_DIG_SHA512:
+		x509->signature_type = STREAM_SIGNATURE_SHA512;
+		break;
+
+	default:
+		fprintf(stderr, "unsupported hahs algorithm %d\n", hash_alg);
+		return false;
+	}
+
+	return true;
 }
 
 static bool x509_gnutls_set_crt_bin(struct x509_gnutls *x509,
 				    void const *buf, size_t size)
 {
+	be32_t			sigtype;
 	gnutls_datum_t const	data = {
-		.data = (void *)buf,
-		.size = size,
+		.data = (void *)buf + sizeof sigtype,
+		.size = size - sizeof sigtype,
 	};
+
+	if (size < sizeof sigtype) {
+		fprintf(stderr, "signature info too small\n");
+		return false;
+	}
+
+	memcpy(&sigtype, buf, sizeof sigtype);
+	x509->signature_type = be32toh(sigtype);
 
 	return x509_gnutls_load_crt_from_mem(&data, &x509->crt, &x509->pubkey,
 					     GNUTLS_X509_FMT_DER);
@@ -384,7 +437,7 @@ static bool x509_gnutls_set_key(struct x509_gnutls *x509,
 	return x509_gnutls_load_key(pem_file, &x509->key, &x509->privkey);
 }
 
-static enum signature_setopt_result 
+static enum signature_setopt_result
 x509_gnutls_setopt(struct signature_algorithm *alg,
 		   char const *key, void const *val, size_t val_len)
 {
@@ -433,9 +486,6 @@ static void x509_dump_cert(FILE *f, gnutls_x509_crt_t crt)
 static bool x509_gnutls_reset(struct signature_algorithm *alg)
 {
 	struct x509_gnutls		*x509 = tox509(alg);
-	gnutls_digest_algorithm_t	hash_alg;
-	unsigned int			hash_mand;
-
 	unsigned int			verify_result;
 
 	size_t				i;
@@ -448,42 +498,38 @@ static bool x509_gnutls_reset(struct signature_algorithm *alg)
 	signature_free(x509->hash);
 	x509->hash = NULL;
 
-	r = gnutls_pubkey_get_preferred_hash_algorithm(x509->pubkey,
-						       &hash_alg,
-						       &hash_mand);
-	if (r < 0) {
-		x509_perror("gnutls_pubkey_get_preferred_hash_algorithm()", r);
-		goto err;
-	}
-
-	switch (hash_alg) {
-	case GNUTLS_DIG_MD5:
+	switch (x509->signature_type) {
+	case STREAM_SIGNATURE_MD5:
 		x509->hash = signature_algorithm_md5_create();
+		x509->hash_alg = GNUTLS_DIG_MD5;
 		break;
 
-	case GNUTLS_DIG_SHA1:
+	case STREAM_SIGNATURE_SHA1:
 		x509->hash = signature_algorithm_sha1_create();
+		x509->hash_alg = GNUTLS_DIG_SHA1;
 		break;
 
-	case GNUTLS_DIG_SHA256:
+	case STREAM_SIGNATURE_SHA256:
 		x509->hash = signature_algorithm_sha256_create();
+		x509->hash_alg = GNUTLS_DIG_SHA256;
 		break;
 
-	case GNUTLS_DIG_SHA512:
+	case STREAM_SIGNATURE_SHA512:
 		x509->hash = signature_algorithm_sha512_create();
+		x509->hash_alg = GNUTLS_DIG_SHA512;
 		break;
 
 	default:
-		fprintf(stderr, "unsupported hahs algorithm %d\n", hash_alg);
+		fprintf(stderr, "unsupported hahs algorithm %d\n",
+			x509->signature_type);
 		goto err;
 	}
 
 	if (!x509->hash) {
-		fprintf(stderr, "failed to create hash algorithm %d\n", hash_alg);
+		fprintf(stderr, "failed to create hash algorithm %d\n",
+			x509->signature_type);
 		goto err;
 	}
-
-	x509->hash_alg = hash_alg;
 
 	if (!signature_reset(x509->hash))
 		goto err;
@@ -535,7 +581,7 @@ static bool x509_gnutls_reset(struct signature_algorithm *alg)
 	}
 
 	if (!kp_code_signing && !x509->skip_purpose) {
-		fprintf(stderr, 
+		fprintf(stderr,
 			"certificate not usable for code signing\ncertificate: ");
 		x509_dump_cert(stderr, x509->crt);
 		fprintf(stderr, "\n");
@@ -606,6 +652,7 @@ static bool x509_gnutls_begin(struct signature_algorithm *alg,
 			      void const **dst, size_t *len)
 {
 	struct x509_gnutls	*x509 = tox509(alg);
+	be32_t			sigtype = htobe32(x509->signature_type);
 	void			*crt_buf = NULL;
 	size_t			crt_len = 0;
 	int			r;
@@ -617,29 +664,30 @@ static bool x509_gnutls_begin(struct signature_algorithm *alg,
 		goto err;
 	}
 
-	crt_buf = calloc(1, crt_len);
+	crt_buf = calloc(1, crt_len + sizeof sigtype);
 	if (crt_buf == NULL) {
 		perror("calloc(gnutls-sig)");
 		goto err;
 	}
-		
+
+	memcpy(crt_buf, &sigtype, sizeof sigtype);
 	r = gnutls_x509_crt_export(x509->crt, GNUTLS_X509_FMT_DER,
-				   crt_buf, &crt_len);
+				   crt_buf + sizeof sigtype, &crt_len);
 	if (r < 0) {
 		x509_perror("gnutls_x509_crt_export()", r);
 		goto err;
 	}
 
-	gnutls_free(x509->crt_buf);
+	free(x509->crt_buf);
 	x509->crt_buf = crt_buf;
 
 	*dst = crt_buf;
-	*len = crt_len;
+	*len = crt_len + sizeof sigtype;
 
 	return true;
 
 err:
-	gnutls_free(crt_buf);
+	free(crt_buf);
 	return false;
 
 }
@@ -672,7 +720,7 @@ static bool x509_gnutls_finish(struct signature_algorithm *alg,
 		x509_perror("gnutls_pubkey_verify_hash()", r);
 		abort();
 		goto err;
-	}		
+	}
 
 	gnutls_free(x509->signature.data);
 	x509->signature.data = signature.data;
@@ -693,8 +741,8 @@ static bool x509_gnutls_setstrength(struct signature_algorithm *alg,
 {
 	struct x509_gnutls	*x509 = tox509(alg);
 
-	x509->skip_purpose = strength < 100;
-	x509->skip_verify  = strength <  20;
+	x509->skip_purpose = (strength < 100);
+	x509->skip_verify  = (strength <  20);
 
 	return strength <= 100;
 }
@@ -704,7 +752,7 @@ static void x509_gnutls_free(struct signature_algorithm *alg)
 	struct x509_gnutls	*x509 = tox509(alg);
 
 	gnutls_free(x509->signature.data);
-	gnutls_free(x509->crt_buf);
+	free(x509->crt_buf);
 
 	if (x509->pubkey)
 		gnutls_pubkey_deinit(x509->pubkey);

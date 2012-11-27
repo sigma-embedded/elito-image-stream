@@ -1,48 +1,64 @@
-CFLAGS = -D_FORTIFY_SOURCE=2 -O2 -g -Werror
+CFLAGS = -D_FORTIFY_SOURCE=2 -O1 -g -Werror
 AM_CFLAGS = -std=gnu99 -Wall -W -Wno-missing-field-initializers -D_GNU_SOURCE \
- -Wno-unused-parameter
+ -Wno-unused-parameter $(AM_CFLAGS-y)
 AM_LDFLAGS = -Wl,-as-needed
 
 bin_PROGRAMS = stream-encode stream-decode
 
+ENABLE_ZLIB = y
+
 DIGEST_PROVIDER = gnutls
 X509_PROVIDER = gnutls
-COMPRESSION_PROVIDER = noop
+
+AM_CFLAGS-$(ENABLE_ZLIB) += -DENABLE_ZLIB=1
+
+COMPRESSION-y = compression.c compression.h
+COMPRESSION-$(ENABLE_ZLIB) += compression-zlib.c
+
+DECOMPRESSION-y = decompression.c decompression.h
+DECOMPRESSION-$(ENABLE_ZLIB) += decompression-zlib.c
 
 LIBS_gnutls = -lgnutls
 
-LIBS = $(LIBS_$(DIGEST_PROVIDER))
+LIBS = $(LIBS_$(DIGEST_PROVIDER)) $(LIBS_$(X509_PROVIDER)) $(LIBS-y)
+LIBS-$(ENABLE_ZLIB) += -lz
 
 stream-encode_SOURCES = \
 	stream-encode.c \
 	signature-$(DIGEST_PROVIDER).c \
 	x509-$(X509_PROVIDER).c \
-	compression-$(COMPRESSION_PROVIDER).c \
+	$(COMPRESSION-y) \
 	signature-none.c \
 	signature.c \
 	signature.h \
 	stream.h \
+	util.c \
+	util.h \
 
 stream-decode_SOURCES = \
 	stream-decode.c \
 	stream.h \
 	signature-$(DIGEST_PROVIDER).c \
 	x509-$(X509_PROVIDER).c \
+	$(DECOMPRESSION-y) \
 	signature-none.c \
 	signature.c \
-	signature.h
+	signature.h \
+	util.c \
+	util.h \
 
 progprefix =
+progsuffix =
 
 prefix = /usr/local
 bindir = ${prefix}/bin
 
-_bin_PROGRAMS = $(addprefix $(progprefix),$(bin_PROGRAMS))
+_bin_PROGRAMS = $(addsuffix $(progsuffix),$(addprefix $(progprefix),$(bin_PROGRAMS)))
 
 all:	$(_bin_PROGRAMS)
 
 .SECONDEXPANSION:
-$(_bin_PROGRAMS):$(progprefix)%:	$$($$*_SOURCES) Makefile
+$(_bin_PROGRAMS):$(progprefix)%$(progsuffix):	$$($$*_SOURCES) Makefile
 	$(CC) $(AM_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) $(LDFLAGS) $(filter %.c,$^) -o $@ $(LIBS)
 
 

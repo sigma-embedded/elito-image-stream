@@ -28,7 +28,7 @@
 bool _signature_pipein(struct signature_algorithm *alg, int fd, size_t len)
 {
 	while (len > 0) {
-		unsigned char	buf[4096];
+		unsigned char	buf[64 * 1024];
 		size_t		tlen = len > sizeof buf ? sizeof buf : len;
 		ssize_t		l = read(fd, buf, tlen);
 

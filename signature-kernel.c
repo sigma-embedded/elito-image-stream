@@ -29,6 +29,8 @@
 #include <sys/socket.h>
 #include <linux/if_alg.h>
 
+#include "util.h"
+
 struct signature_kernel_algorithm {
 	struct signature_algorithm	alg;
 	int				fd_sock;

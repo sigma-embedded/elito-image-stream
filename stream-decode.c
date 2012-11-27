@@ -27,6 +27,7 @@
 #include <errno.h>
 #include <sysexits.h>
 #include <fcntl.h>
+#include <assert.h>
 
 #include <getopt.h>
 #include <unistd.h>
@@ -37,6 +38,7 @@
 #include <sys/wait.h>
 
 #include "signature.h"
+#include "decompression.h"
 
 #define CMD_HELP                0x1000
 #define CMD_VERSION             0x1001
@@ -194,6 +196,51 @@ static bool set_signature_opts(struct signature_algorithm *sigalg,
 	return true;
 }
 
+static unsigned char		g_decompress_buffer[1024*1024];
+
+static struct decompression_algorithm *
+create_decompress(struct memory_block_data const *payload)
+{
+	struct decompression_algorithm	*alg = NULL;
+	struct iovec			decomp_vec = {
+		.iov_base = g_decompress_buffer,
+		.iov_len  = sizeof g_decompress_buffer,
+	};
+
+	switch (payload->compression) {
+	case STREAM_COMPRESS_NONE:
+		if (payload->len != payload->mem.len) {
+			fprintf(stderr,
+				"compression len mismatch (%zu vs. %zu)\n",
+				payload->len, payload->mem.len);
+			return false;
+		}
+
+		return NULL;
+
+	case STREAM_COMPRESS_GZIP:
+		alg = decompression_algorithm_gzip_create(&decomp_vec);
+		break;
+
+	case STREAM_COMPRESS_XZ:
+		alg = decompression_algorithm_xz_create(&decomp_vec);
+		break;
+
+	default:
+		fprintf(stderr, "unknown compression mode %u\n",
+			payload->compression);
+		return false;
+	}
+
+	if (!alg) {
+		fprintf(stderr, "failed to create decompression algorithm %d\n",
+			payload->compression);
+		return false;
+	}
+
+	return alg;
+}
+
 static struct signature_algorithm *
 create_sigalg(struct memory_block_signature const *signature)
 {
@@ -211,12 +258,20 @@ create_sigalg(struct memory_block_signature const *signature)
 		sigalg = signature_algorithm_none_create();
 		break;
 
+	case STREAM_SIGNATURE_MD5:
+		sigalg = signature_algorithm_md5_create();
+		break;
+
 	case STREAM_SIGNATURE_SHA1:
 		sigalg = signature_algorithm_sha1_create();
 		break;
 
 	case STREAM_SIGNATURE_SHA256:
 		sigalg = signature_algorithm_sha256_create();
+		break;
+
+	case STREAM_SIGNATURE_SHA512:
+		sigalg = signature_algorithm_sha512_create();
 		break;
 
 	case STREAM_SIGNATURE_X509:
@@ -397,17 +452,126 @@ err:
 	return false;
 }
 
+struct decompressor {
+	struct decompression_algorithm	*alg;
+	int				fd_in;
+	int				fd_out;
+	size_t				count_in;
+	pid_t				pid;
+};
+
+static bool decompressor_wait(struct decompressor *decomp)
+{
+	int			status;
+	int			rc;
+	unsigned int		cnt = 20; /* 2 seconds */
+
+	if (decomp->pid == -1)
+		return true;
+
+	close(decomp->fd_out);
+
+	do {
+		rc = waitpid(decomp->pid, &status, WNOHANG);
+		if (rc == 0)
+			usleep(100000);
+	} while (rc == 0 && cnt-- > 0);
+
+	if (rc == 0) {
+		kill(decomp->pid, SIGTERM);
+		usleep(100000);
+		kill(decomp->pid, SIGKILL);
+
+		rc = waitpid(decomp->pid, &status, 0);
+	}
+
+	if (rc < 0) {
+		perror("waitpid(<decompressor>)");
+		goto err;
+	}
+
+	if (!WIFEXITED(status) || WEXITSTATUS(status)) {
+		fprintf(stderr, "decompressor failed with %d\n", status);
+		goto err;
+	}
+
+	decomp->pid = -1;
+	return true;
+
+err:
+	decomp->pid = -1;
+	return false;
+}
+
+static bool decompressor_run(struct decompressor *decomp,
+			     struct decompression_algorithm *alg,
+			     int fd, size_t count_in)
+{
+	int		pfds[2];
+
+	decomp->alg = alg;
+	decomp->pid = -1;
+	decomp->count_in = count_in;
+
+	if (alg == NULL) {
+		decomp->fd_out = fd;
+		decomp->fd_in  = -1;
+		return true;
+	}
+
+	if (pipe2(pfds, O_CLOEXEC) < 0) {
+		perror("pipe2(<decomp>)");
+		goto err;
+	}
+
+	decomp->fd_in  = fd;
+	decomp->fd_out = pfds[0];
+
+	decomp->pid = fork();
+	if (decomp->pid == -1) {
+		perror("fork(<decomp>)");
+		goto err;
+	}
+
+	if (decomp->pid == 0) {
+		close(pfds[0]);
+
+		if (!alg->splice(alg, fd, pfds[1], count_in)) {
+			fprintf(stderr, "failed to uncompress data");
+			_exit(1);
+		}
+
+		_exit(0);
+	}
+
+	close(pfds[1]);
+	return true;
+
+err:
+	if (pfds[1] != -1)
+		close(pfds[1]);
+
+	if (pfds[0] != -1)
+		close(pfds[0]);
+
+	assert(decomp->pid == -1);
+	decomp->alg = NULL;
+	return false;
+}
+
 static bool	send_stream(char const *program,
 			    struct memory_block_data const *payload,
-			    struct signature_algorithm *sigalg)
+			    struct signature_algorithm *sigalg,
+			    struct decompression_algorithm *decompalg)
 {
+	struct decompressor		decomp = { .pid = -1 };
 	size_t				len;
 	pid_t				pid = -1;
 	int				pfds[2] = { -1, -1 };
 	int				status;
 
 	if (pipe(pfds) < 0) {
-		perror("pipe()");
+		perror("pipe(<pfds>)");
 		goto err;
 	}
 
@@ -445,12 +609,19 @@ static bool	send_stream(char const *program,
 
 	close(pfds[0]);
 	pfds[0] = -1;
-	for (len = 0; len < payload->mem.len && !payload->mem.stream->is_eos;) {
+
+	if (!decompressor_run(&decomp, decompalg, 
+			      payload->mem.stream->fd, payload->mem.len)) {
+		fprintf(stderr, "failed to start decompressor\n");
+		goto err;
+	}
+		
+	for (len = 0; len < payload->len && !payload->mem.stream->is_eos;) {
 		ssize_t		l;
 
 		/* \todo: implement decompressor */
-		l = tee(payload->mem.stream->fd, pfds[1],
-			payload->mem.len - len, SPLICE_F_MORE);
+		l = tee(decomp.fd_out, pfds[1],
+			payload->len - len, SPLICE_F_MORE);
 		if (l == 0)
 			payload->mem.stream->is_eos = true;
 		else if (l < 0 && errno == EINTR) {
@@ -460,7 +631,7 @@ static bool	send_stream(char const *program,
 			break;
 		}
 
-		if (!signature_pipein(sigalg, payload->mem.stream->fd, l))
+		if (!signature_pipein(sigalg, decomp.fd_out, l))
 			break;
 
 		len += l;
@@ -468,9 +639,12 @@ static bool	send_stream(char const *program,
 	close(pfds[1]);
 	pfds[1] = -1;
 
-	if (len != payload->mem.len) {
+	if (!decompressor_wait(&decomp))
+		goto err;
+
+	if (len != payload->len) {
 		fprintf(stderr, "failed to read all payload data (%zu < %zu)\n",
-			len, payload->mem.len);
+			len, payload->len);
 		goto err;
 	}
 
@@ -499,6 +673,8 @@ err:
 		kill(pid, SIGTERM);
 		waitpid(pid, NULL, 0);
 	}
+
+	decompressor_wait(&decomp);
 
 	return false;
 }
@@ -540,41 +716,24 @@ static bool	process_hunk(char const *program,
 			     struct memory_block_signature const *signature)
 {
 	struct signature_algorithm	*sigalg = NULL;
+	struct decompression_algorithm	*decompalg = NULL;
 
-	switch (payload->compression) {
-	case STREAM_COMPRESS_NONE:
-		if (payload->len != payload->mem.len) {
-			fprintf(stderr,
-				"compression len mismatch (%zu vs. %zu)\n",
-				payload->len, payload->mem.len);
-			return false;
-		}
-		break;
-
-	case STREAM_COMPRESS_GZIP:
-	case STREAM_COMPRESS_XZ:
-		/* \todo: implement me */
-		fprintf(stderr, "compression mode %u not implemented yet\n",
-			payload->compression);
-		return false;
-
-	default:
-		fprintf(stderr, "unknown compression mode %u\n",
-			payload->compression);
-		return false;
-	}
 
 	sigalg = create_sigalg(signature);
 	if (!sigalg)
 		goto err;
 
-	if (!signature_update(sigalg, signature->shdr->salt,
-			      sizeof signature->shdr->salt) ||
-	    !signature_update(sigalg, &signature->hhdr->type,
-			      sizeof signature->hhdr->type))
+	decompalg = create_decompress(payload);
+	if (!decompalg && payload->compression != STREAM_COMPRESS_NONE)
 		goto err;
 
-	if (!send_stream(program, payload, sigalg))
+	if (!send_stream(program, payload, sigalg, decompalg))
+		goto err;
+
+	if (!signature_update(sigalg, signature->shdr->salt,
+			      sizeof signature->shdr->salt) ||
+	    !signature_update(sigalg, signature->hhdr,
+			      sizeof *signature->hhdr))
 		goto err;
 
 	if (signature->mem.len && !verify_signature(signature, sigalg))
@@ -588,6 +747,7 @@ static bool	process_hunk(char const *program,
 	return true;
 
 err:
+	decompression_free(decompalg);
 	signature_free(sigalg);
 
 	return false;

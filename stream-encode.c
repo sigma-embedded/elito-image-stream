@@ -25,6 +25,7 @@
 #include <stdbool.h>
 #include <string.h>
 #include <errno.h>
+#include <assert.h>
 #include <sysexits.h>
 
 #include <getopt.h>
@@ -33,6 +34,7 @@
 
 #include <sys/stat.h>
 
+#include "util.h"
 #include "signature.h"
 #include "compression.h"
 
@@ -65,6 +67,7 @@ struct hunk {
 	char const			*filename;
 
 	struct signature_algorithm *	sig_alg;
+	struct compression_algorithm *	compress_alg;
 };
 
 static struct {
@@ -86,46 +89,66 @@ static struct {
 	enum stream_compression	compression;
 	struct compression_algorithm *(*generator)(void);
 } const			COMPRESSION_ALGORITHMS[] = {
+	{ "copy",   STREAM_COMPRESS_NONE, NULL },
+#ifdef ENABLE_ZLIB
 	{ "gzip",   STREAM_COMPRESS_GZIP, compression_algorithm_gzip_create },
-	{ "xz",     STREAM_COMPRESS_XZ,   compression_algorithm_xz_create },
-};
+	{ "zlib",   STREAM_COMPRESS_GZIP, compression_algorithm_gzip_create },
+#endif
 
-#define ARRAY_SIZE(_a)	(sizeof(_a) / sizeof(_a)[0])
+#ifdef ENABLE_XZ
+	{ "xz",     STREAM_COMPRESS_XZ,   compression_algorithm_xz_create },
+#endif
+};
 
 static bool parse_signature(enum stream_signature *sig, 
 			    struct signature_algorithm **alg,
 			    char const *str)
 {
-	size_t		i;
+	struct signature_algorithm	*new_alg = NULL;
+	enum stream_signature		new_sig;
+	size_t				i;
 
-	signature_free(*alg);
-	*alg = NULL;
-
-	for (i = 0; i < ARRAY_SIZE(SIGNATURE_ALGORITHMS); ++i) {
+	for (i = 0; i < ARRAY_SIZE(SIGNATURE_ALGORITHMS) && new_alg == NULL; ++i) {
 		if (strcmp(str, SIGNATURE_ALGORITHMS[i].id) != 0)
 			continue;
 
-		*sig = SIGNATURE_ALGORITHMS[i].signature;
-		*alg = SIGNATURE_ALGORITHMS[i].generator();
-		return true;
+		new_sig = SIGNATURE_ALGORITHMS[i].signature;
+		new_alg = SIGNATURE_ALGORITHMS[i].generator();
 	}
 
-	return false;
+	if (new_alg) {
+		signature_free(*alg);
+		*alg = new_alg;
+		*sig = new_sig;
+	} 
+
+	return new_alg != NULL;
 }
 
-static bool parse_compression(enum stream_compression *sig, char const *str)
+static bool parse_compression(enum stream_compression *cmp, 
+			      struct compression_algorithm **alg,
+			      char const *str)
 {
-	size_t		i;
+	enum stream_compression		new_cmp;
+	struct compression_algorithm	*new_alg = NULL;
+	size_t				i;
 
-	for (i = 0; i < ARRAY_SIZE(COMPRESSION_ALGORITHMS); ++i) {
+
+	for (i = 0; i < ARRAY_SIZE(COMPRESSION_ALGORITHMS) && new_alg == NULL; ++i) {
 		if (strcmp(str, COMPRESSION_ALGORITHMS[i].id) != 0)
 			continue;
 
-		*sig = COMPRESSION_ALGORITHMS[i].compression;
-		return true;
+		new_cmp = COMPRESSION_ALGORITHMS[i].compression;
+		new_alg = COMPRESSION_ALGORITHMS[i].generator();
 	}
 
-	return false;
+	if (new_alg) {
+		compression_free(*alg);
+		*alg = new_alg;
+		*cmp = new_cmp;
+	}
+
+	return new_alg != NULL;
 }
 
 static char const *parse_hunk_opts(struct hunk *hunk, char const *opt)
@@ -152,17 +175,20 @@ static char const *parse_hunk_opts(struct hunk *hunk, char const *opt)
 	if (val)
 		*val++ = '\0';
 
+	assert(hunk->sig_alg != NULL);
+
 	key = cur_opt;
 	if (val == NULL && parse_signature(&hunk->signature,
 					   &hunk->sig_alg, key))
 		return next;
 
-	if (val == NULL && parse_compression(&hunk->compression, key))
+	if (val == NULL && parse_compression(&hunk->compression, 
+					     &hunk->compress_alg, key))
 		return next;
 
 	if (strcmp(key, "sig") == 0) {
-		if (val == NULL || !parse_signature(&hunk->signature, 
-						    &hunk->sig_alg, val)) {
+		if (val == NULL ||
+		    !parse_signature(&hunk->signature, &hunk->sig_alg, val)) {
 			fprintf(stderr, 
 				"unsupported signature algorithm '%s'\n", val);
 			return NULL;
@@ -172,7 +198,9 @@ static char const *parse_hunk_opts(struct hunk *hunk, char const *opt)
 	}
 
 	if (strcmp(key, "pack") == 0 || strcmp(key, "compression") == 0) {
-		if (val == NULL || !parse_compression(&hunk->compression, val)) {
+		if (val == NULL ||
+		    !parse_compression(&hunk->compression, &hunk->compress_alg,
+				       val)) {
 			fprintf(stderr, 
 				"unsupported compression algorithm '%s'\n", val);
 			return NULL;
@@ -180,6 +208,8 @@ static char const *parse_hunk_opts(struct hunk *hunk, char const *opt)
 
 		return next;
 	}
+
+	assert(hunk->sig_alg != NULL);
 
 	switch (signature_setopt(hunk->sig_alg, key, val, 0)) {
 	case SIGNATURE_SETOPT_SUCCESS:
@@ -254,32 +284,11 @@ static bool register_hunk(char const *desc, struct hunk **hunks,
 	return true;
 }
 
-static bool	write_all(int fd, void const *buf, size_t len)
-{
-	while (len > 0) {
-		ssize_t	l = write(fd, buf, len);
-
-		if (l > 0) {
-			buf += l;
-			len -= l;
-		} else if (l == 0) {
-			fprintf(stderr, "null-write\n");
-			break;
-		} else if (errno == EINTR)
-			continue;
-		else {
-			perror("write()");
-			break;
-		}
-	}
-
-	return len == 0;
-}
-
 static bool	dump_hunk(int ofd, struct hunk const *hunk,
 			  struct stream_header const *shdr)
 {
 	struct signature_algorithm	*sig_alg = hunk->sig_alg;
+	struct compression_algorithm	*compress_alg = hunk->compress_alg;
 	void const			*sig_buf;
 	size_t				sig_len;
 
@@ -292,6 +301,7 @@ static bool	dump_hunk(int ofd, struct hunk const *hunk,
 	};
 	struct stat			st;
 	int				hfd;
+	int				cfd = -1;
 	bool				rc = false;
 
 	(void)shdr;
@@ -313,20 +323,36 @@ static bool	dump_hunk(int ofd, struct hunk const *hunk,
 	if (!signature_begin(sig_alg, &sig_buf, &sig_len))
 		goto out;
 
-	hdr.hunk_len = htobe32(st.st_size);
 	hdr.decompress_len = htobe32(st.st_size);
 	hdr.prefix_len = htobe32(sig_len);
 
-	if (!signature_update(sig_alg, shdr->salt, sizeof shdr->salt) ||
-	    !signature_update(sig_alg, &hdr.type, sizeof hdr.type))
+	/* compress hunk */
+	if (compress_alg == NULL) {
+		hdr.hunk_len = htobe32(st.st_size);
+		cfd = hfd;
+	} else if (!compression_reset(compress_alg, st.st_size)) {
+		fprintf(stderr, "failed to reset compression\n");
 		goto out;
+	} else if (!compression_read(compress_alg, sig_alg, hfd, st.st_size)) {
+		fprintf(stderr, "failed to compress hunk\n");
+		goto out;
+	} else {
+		ssize_t	clen = compression_finish(compress_alg);
+		if (clen < 0) {
+			fprintf(stderr, "compression failed\n");
+			goto out;
+		}
+
+		hdr.hunk_len = htobe32(clen);
+		cfd = compress_alg->out_fd;
+	}
 
 	write_all(ofd, &hdr, sizeof hdr);
 	write_all(ofd, sig_buf, sig_len);
 
 	for (;;) {
 		unsigned char	buf[1024*1024];
-		ssize_t		l = read(hfd, buf, sizeof buf);
+		ssize_t		l = read(cfd, buf, sizeof buf);
 
 		if (l == 0)
 			break;
@@ -337,12 +363,17 @@ static bool	dump_hunk(int ofd, struct hunk const *hunk,
 			goto out;
 		}
 
-		if (!signature_update(sig_alg, buf, l))
+		/* compression pushes data into signature algorithm */
+		if (compress_alg == NULL && !signature_update(sig_alg, buf, l))
 			goto out;
 
 		if (!write_all(ofd, buf, l))
 			goto out;
 	}
+
+	if (!signature_update(sig_alg, shdr->salt, sizeof shdr->salt) ||
+	    !signature_update(sig_alg, &hdr,       sizeof hdr))
+		goto out;
 
 	if (!sig_alg->finish(sig_alg, &sig_buf, &sig_len))
 		goto out;
@@ -411,6 +442,7 @@ int main(int argc, char *argv[])
 			return EX_DATAERR;
 
 		signature_free(hunks[i].sig_alg);
+		compression_free(hunks[i].compress_alg);
 	}
 
 	free(hunks);

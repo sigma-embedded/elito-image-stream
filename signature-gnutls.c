@@ -26,6 +26,7 @@
 #include <gnutls/crypto.h>
 
 #include "signature.h"
+#include "util.h"
 
 #if GNUTLS_VERSION_NUMBER >= 0x02090a
 struct signature_gnutls_digest {
