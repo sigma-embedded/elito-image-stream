@@ -50,7 +50,7 @@ static struct option const		CMDLINE_OPTIONS[] = {
 
 static void show_help(void)
 {
-	printf("Usage: stream-encode [--hunk|-h <type>[,<opts>]=<filename>]\n");
+	printf("Usage: stream-encode [--hunk|-h <type>[,<opts>]!<filename>]\n");
 	exit(0);
 }
 
@@ -160,7 +160,7 @@ static char const *parse_hunk_opts(struct hunk *hunk, char const *opt)
 	char const	*key;
 
 	if (next == NULL)
-		next = strchr(opt, '=');
+		next = strchr(opt, '!');
 
 	if (next == NULL)
 		next = opt + strlen(opt);
@@ -171,7 +171,7 @@ static char const *parse_hunk_opts(struct hunk *hunk, char const *opt)
 	memcpy(cur_opt, opt, opt_len);
 	cur_opt[opt_len] = '\0';
 
-	val = strchr(cur_opt, '!');
+	val = strchr(cur_opt, '=');
 	if (val)
 		*val++ = '\0';
 
@@ -255,7 +255,7 @@ static bool register_hunk(char const *desc, struct hunk **hunks,
 
 			break;
 
-		case '=':
+		case '!':
 			res.filename = ptr + 1;
 			ptr += strlen(ptr); /* -> points to terminating \0 */
 			break;

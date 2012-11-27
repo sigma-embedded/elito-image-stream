@@ -130,7 +130,7 @@ for encoder in $ENCODERS; do
 	STDIN=
 	GREMLIN=false
 	start "Creating stream of '$infile' with '$encoder'"
-	runit $encoder -h "$ENCODEOPTS"=$infile 3> $tmpdir/stream
+	runit $encoder -h "$ENCODEOPTS"!$infile 3> $tmpdir/stream
 	ok
 
 	! $GREMLIN || bin/gremlin $tmpdir/stream

@@ -10,16 +10,15 @@ $1$2,\
 !$1$(patsubst !%,%,$2)),\
 -$1$(patsubst -%,%,$2))\
 
-
 genprog = $(strip $(foreach p,$2, $(call _genprog,$1,$p)))
 
-run = env BASE_ID=$(strip $1) bash $R \
+run = @env BASE_ID=$(strip $1) bash $R \
   '$(call genprog,bin/stream-encode_,$2)' \
   '$(call genprog,bin/stream-decode_,$3)' \
   '$(addsuffix .in,$(addprefix $(STREAM_TMPDIR)/,$4))' \
   $5
 
-x509 = sig!x509,key!ca/$1.key,crt!ca/$1.crt
+x509 = sig=x509,key=ca/$1.key,crt=ca/$1.crt
 
 c = ,
 E_0 = 0x1,none
@@ -70,12 +69,12 @@ tests:
 
 	$(call run, 300, \
 	       gnutls-gnutls, gnutls-gnutls, \
-	       rnd-271344, \
+	       rnd-0 rnd-271344, \
 	       '$(E_5)$(call x509,valid/ok)' '$(D_1)')
 
 	$(call run, 310, \
 	       gnutls-gnutls, gnutls-gnutls, \
-	       rnd-271344, \
+	       rnd-0 rnd-271344, \
 	       '$(E_5)zlib${c}$(call x509,valid/ok)' '$(D_1)')
 
 	$(call run, 320, \
