@@ -20,16 +20,6 @@
 #include <stdlib.h>
 #include <stdbool.h>
 
-/* \todo: move this part into a common header */
-#include <stdint.h>
-#include <stddef.h>
-#define container_of(_ptr, _type, _attr) __extension__		\
-	({								\
-		__typeof__( ((_type *)0)->_attr) *_tmp_mptr = (_ptr);	\
-		(_type *)((uintptr_t)_tmp_mptr - offsetof(_type, _attr)); \
-	})
-
-
 enum signature_setopt_result {
 	SIGNATURE_SETOPT_SUCCESS = 23,
 	SIGNATURE_SETOPT_NOOPT,
