@@ -105,7 +105,7 @@ static bool parse_signature(enum stream_signature *sig,
 			    char const *str)
 {
 	struct signature_algorithm	*new_alg = NULL;
-	enum stream_signature		new_sig;
+	enum stream_signature		new_sig = new_sig;
 	size_t				i;
 
 	for (i = 0; i < ARRAY_SIZE(SIGNATURE_ALGORITHMS) && new_alg == NULL; ++i) {
@@ -129,8 +129,8 @@ static bool parse_compression(enum stream_compression *cmp,
 			      struct compression_algorithm **alg,
 			      char const *str)
 {
-	enum stream_compression		new_cmp;
 	struct compression_algorithm	*new_alg = NULL;
+	enum stream_compression		new_cmp = new_cmp;
 	size_t				i;
 
 
