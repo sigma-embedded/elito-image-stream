@@ -1,6 +1,6 @@
 CFLAGS = -D_FORTIFY_SOURCE=2 -O1 -g -Werror
 AM_CFLAGS = -std=gnu99 -Wall -W -Wno-missing-field-initializers -D_GNU_SOURCE \
- -Wno-unused-parameter $(AM_CFLAGS-y)
+ -Wno-unused-parameter $(AM_CFLAGS-y) $(CFLAGS_$(DIGEST_PROVIDER))
 AM_LDFLAGS = -Wl,-as-needed
 
 bin_PROGRAMS = stream-encode stream-decode
@@ -18,7 +18,9 @@ COMPRESSION-$(ENABLE_ZLIB) += compression-zlib.c
 DECOMPRESSION-y = decompression.c decompression.h
 DECOMPRESSION-$(ENABLE_ZLIB) += decompression-zlib.c
 
-LIBS_gnutls = -lgnutls
+PKG_CONFIG ?= pkg-config
+CFLAGS_gnutls = $(shell $(PKG_CONFIG) --cflags gnutls)
+LIBS_gnutls = $(shell $(PKG_CONFIG) --libs gnutls)
 
 LIBS = $(LIBS_$(DIGEST_PROVIDER)) $(LIBS_$(X509_PROVIDER)) $(LIBS-y)
 LIBS-$(ENABLE_ZLIB) += -lz
