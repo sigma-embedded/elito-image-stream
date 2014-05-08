@@ -611,13 +611,46 @@ static bool x509_gnutls_pipein(struct signature_algorithm *alg,
 	return signature_pipein(x509->hash, fd, len);
 }
 
+static bool _x509_verify_hash(struct x509_gnutls *x509,
+			      gnutls_datum_t const *data,
+			      gnutls_datum_t const *sig)
+{
+	gnutls_pk_algorithm_t		pk_alg;
+	gnutls_sign_algorithm_t		sig_alg;
+	int				r;
+	bool				rc = false;
+
+	pk_alg	= gnutls_pubkey_get_pk_algorithm(x509->pubkey, NULL);
+	if (pk_alg < 0) {
+		x509_perror("gnutls_pubkey_get_pk_algorithm()", pk_alg);
+		goto out;
+	}
+
+	sig_alg = gnutls_pk_to_sign(pk_alg, x509->hash_alg);
+	if (sig_alg == GNUTLS_SIGN_UNKNOWN) {
+		x509_perror("gnutls_pk_to_sign()", sig_alg);
+		goto out;
+	}
+
+	r = gnutls_pubkey_verify_hash2(x509->pubkey, sig_alg,
+				       0, data, sig);
+	if (r < 0) {
+		x509_perror("gnutls_pubkey_verify_hash()", r);
+		goto out;
+	}
+
+	rc = true;
+
+out:
+	return rc;
+}
+
 static bool x509_gnutls_verify(struct signature_algorithm *alg,
 			       void const *sig, size_t len)
 {
 	struct x509_gnutls	*x509 = tox509(alg);
 
 	gnutls_datum_t		sig_dat;
-	int			r;
 	gnutls_datum_t		hash_dat;
 
 	void const		*hash;
@@ -635,13 +668,7 @@ static bool x509_gnutls_verify(struct signature_algorithm *alg,
 	hash_dat.data = (void *)hash;
 	hash_dat.size = hash_len;
 
-	r = gnutls_pubkey_verify_hash(x509->pubkey, 0, &hash_dat, &sig_dat);
-	if (r < 0) {
-		x509_perror("gnutls_pubkey_verify_hash()", r);
-		goto out;;
-	}
-
-	rc = true;
+	rc = _x509_verify_hash(x509, &hash_dat, &sig_dat);
 
 out:
 	return rc;
@@ -715,9 +742,7 @@ static bool x509_gnutls_finish(struct signature_algorithm *alg,
 		goto err;
 	}
 
-	r = gnutls_pubkey_verify_hash(x509->pubkey, 0, &hash_dat, &signature);
-	if (r < 0) {
-		x509_perror("gnutls_pubkey_verify_hash()", r);
+	if (!_x509_verify_hash(x509, &hash_dat, &signature)) {
 		abort();
 		goto err;
 	}
