@@ -615,6 +615,7 @@ static bool _x509_verify_hash(struct x509_gnutls *x509,
 			      gnutls_datum_t const *data,
 			      gnutls_datum_t const *sig)
 {
+#if GNUTLS_VERSION_MAJOR >= 3
 	gnutls_pk_algorithm_t		pk_alg;
 	gnutls_sign_algorithm_t		sig_alg;
 	int				r;
@@ -643,6 +644,9 @@ static bool _x509_verify_hash(struct x509_gnutls *x509,
 
 out:
 	return rc;
+#else
+	return gnutls_pubkey_verify_hash(x509->pubkey, 0, data, sig) >= 0;
+#endif
 }
 
 static bool x509_gnutls_verify(struct signature_algorithm *alg,
