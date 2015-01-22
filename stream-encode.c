@@ -308,7 +308,8 @@ static bool	dump_hunk(int ofd, struct hunk const *hunk,
 
 	hfd = open(hunk->filename, O_RDONLY);
 	if (hfd < 0) {
-		perror("open(<hunk>)");
+		fprintf(stderr, "open(): %m (0x%x|%s)\n",
+			hunk->type, hunk->filename);
 		return false;
 	}
 
