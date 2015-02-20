@@ -21,6 +21,7 @@
 
 #define __packed	__attribute__((__packed__))
 
+typedef uint64_t	be64_t;
 typedef uint32_t	be32_t;
 typedef uint8_t		be8_t;
 
@@ -46,8 +47,7 @@ struct stream_header {
 	be32_t		magic;
 	be32_t		version;
 	be8_t		salt[8];
-	be32_t		_unused0;
-	be32_t		_unused1;
+	be64_t		build_time;
 	be32_t		_unused2;
 	be32_t		_unused3;
 } __packed;;

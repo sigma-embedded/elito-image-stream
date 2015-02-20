@@ -28,6 +28,7 @@
 #include <sysexits.h>
 #include <fcntl.h>
 #include <assert.h>
+#include <inttypes.h>
 
 #include <getopt.h>
 #include <unistd.h>
@@ -777,6 +778,7 @@ int main(int argc, char *argv[])
 	struct signature_options sigopts = {
 		.min_strength	=  0,
 	};
+	char			build_time[8*3 + 2];
 
 	while (1) {
 		int         c = getopt_long(argc, argv, "vx:S:",
@@ -818,6 +820,9 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "bad stream magic\n");
 		return EX_DATAERR;
 	}
+
+	sprintf(build_time, "%" PRIu64, be64toh(hdr.build_time));
+	setenv("STREAM_BUILD_TIME", build_time, 1);
 
 	if (!stage_transaction(program, "start"))
 		return EX_OSERR;

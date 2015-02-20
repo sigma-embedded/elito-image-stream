@@ -31,6 +31,7 @@
 #include <getopt.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <time.h>
 
 #include <sys/stat.h>
 
@@ -402,6 +403,7 @@ int main(int argc, char *argv[])
 
 	struct stream_header	hdr = {
 		.magic = htobe32(STREAM_HEADER_MAGIC),
+		.build_time = htobe64(time(NULL)),
 		.version = 0,
 	};
 
