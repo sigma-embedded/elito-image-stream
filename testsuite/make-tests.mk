@@ -37,11 +37,13 @@ tests:
 	       zero-0 zero-1 zero-65536 rnd-65536 rnd-5242880, \
 	       '$(E_0)' '$(D_0)')
 
+ifneq ($(SKIP_MD5),true)
 	$(call run, 50, \
 	       kernel-gnutls gnutls-gnutls, \
 	       kernel-gnutls gnutls-gnutls, \
 	       rnd-271344, \
 	       '$(E_2)' '$(D_0)')
+endif
 
 	$(call run, 100, \
 	       kernel-gnutls gnutls-gnutls, \
