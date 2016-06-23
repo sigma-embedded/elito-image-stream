@@ -685,6 +685,7 @@ err:
 }
 
 static bool	send_stream(char const *program,
+			    struct notify_info *notify,
 			    struct memory_block_data const *payload,
 			    struct signature_algorithm *sigalg,
 			    struct decompression_algorithm *decompalg)
@@ -694,6 +695,8 @@ static bool	send_stream(char const *program,
 	pid_t				pid = -1;
 	int				pfds[2] = { -1, -1 };
 	int				status;
+
+	notification_send(notify, "s", 1);
 
 	if (pipe(pfds) < 0) {
 		perror("pipe(<pfds>)");
@@ -756,6 +759,8 @@ static bool	send_stream(char const *program,
 			break;
 		}
 
+		notification_handle_read(notify, l);
+
 		if (!signature_pipein(sigalg, decomp.fd_out, l))
 			break;
 
@@ -773,6 +778,8 @@ static bool	send_stream(char const *program,
 		goto err;
 	}
 
+	notification_send(notify, "w", 1);
+
 	if (waitpid(pid, &status, 0) < 0) {
 		perror("waitpid()");
 		goto err;
@@ -784,6 +791,8 @@ static bool	send_stream(char const *program,
 		fprintf(stderr, "program failed with %d\n", status);
 		goto err;
 	}
+
+	notification_send(notify, "e\0", 2);
 
 	return true;
 
@@ -800,6 +809,8 @@ err:
 	}
 
 	decompressor_wait(&decomp);
+
+	notification_send(notify, "e\1", 2);
 
 	return false;
 }
@@ -837,6 +848,7 @@ static bool	verify_signature(struct memory_block_signature const *signature,
 }
 
 static bool	process_hunk(char const *program,
+			     struct notify_info *notify,
 			     struct memory_block_data const *payload,
 			     struct memory_block_signature const *signature)
 {
@@ -852,7 +864,7 @@ static bool	process_hunk(char const *program,
 	if (!decompalg && payload->compression != STREAM_COMPRESS_NONE)
 		goto err;
 
-	if (!send_stream(program, payload, sigalg, decompalg))
+	if (!send_stream(program, notify, payload, sigalg, decompalg))
 		goto err;
 
 	if (!signature_update(sigalg, signature->shdr->salt,
@@ -1056,7 +1068,7 @@ int main(int argc, char *argv[])
 		signature.shdr       = &hdr;
 		signature.hhdr       = &hhdr;
 
-		if (!process_hunk(program, &payload, &signature))
+		if (!process_hunk(program, &stream.notify, &payload, &signature))
 			signal_return(&stream, EX_DATAERR);
 	}
 
