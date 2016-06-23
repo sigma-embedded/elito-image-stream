@@ -57,7 +57,7 @@ bindir = ${prefix}/bin
 
 _bin_PROGRAMS = $(addsuffix $(progsuffix),$(addprefix $(progprefix),$(bin_PROGRAMS)))
 
-all:	$(_bin_PROGRAMS)
+all:	$(_bin_PROGRAMS) dump-progress
 
 .SECONDEXPANSION:
 $(_bin_PROGRAMS):$(progprefix)%$(progsuffix):	$$($$*_SOURCES) Makefile
