@@ -84,9 +84,9 @@ struct notify_info {
 };
 
 struct stream_data {
-	int		fd;
-	bool		is_eos;
-	size_t		total_len;
+	int			fd;
+	bool			is_eos;
+	size_t			total_len;
 	struct notify_info	notify;
 };
 
