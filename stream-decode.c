@@ -1022,6 +1022,8 @@ int main(int argc, char *argv[])
 	sprintf(build_time, "%" PRIu64, be64toh(hdr.build_time));
 	setenv("STREAM_BUILD_TIME", build_time, 1);
 
+	notification_send_length(&stream.notify, stream.total_len);
+
 	if (!stage_transaction(program, "start"))
 		signal_return(&stream, EX_OSERR);
 
