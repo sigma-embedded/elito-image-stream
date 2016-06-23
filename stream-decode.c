@@ -193,9 +193,7 @@ static bool notification_handle_read(struct notify_info *notify, size_t cnt)
 
 static bool notification_init(struct notify_info *notify, int port)
 {
-	int const	ONE = 1;
 	int		fd;
-	int		rc;
 
 	if (port == -1) {
 		notify->fd = -1;
@@ -208,19 +206,13 @@ static bool notification_init(struct notify_info *notify, int port)
 		return false;
 	}
 
-	rc = setsockopt(fd, SOL_SOCKET, SO_BROADCAST, &ONE, sizeof ONE);
-	if (rc < 0) {
-		perror("setsockopt(SO_BROADCAST)");
-		goto err;
-	}
-
 	notify->fd   = fd;
 
 	/* assume IPv4 for now; change for IPv6 when needed */
 	notify->dst.ip4 = (struct sockaddr_in) {
 		.sin_family	= AF_INET,
 		.sin_port	= htons(port),
-		.sin_addr	= { INADDR_BROADCAST },
+		.sin_addr	= { htonl(INADDR_LOOPBACK) },
 	};
 	notify->dst_len = sizeof notify->dst.ip4;
 	notify->cur_pos = 0;
