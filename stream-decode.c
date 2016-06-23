@@ -950,6 +950,12 @@ static bool read_hdr_ext(struct stream_data *stream, unsigned int version,
 
 	return true;
 }
+
+#define signal_return(_stream, _code) do {				\
+		notification_signal_exit(&(_stream)->notify, (_code));	\
+		return (_code);						\
+	} while (0)
+
 int main(int argc, char *argv[])
 {
 	struct stream_data	stream;
@@ -999,25 +1005,25 @@ int main(int argc, char *argv[])
 		return EX_OSERR;
 
 	if (!stream_data_open(&stream, 0))
-		return EX_OSERR;
+		signal_return(&stream, EX_OSERR);
 
 	if (!stream_data_read(&stream, &hdr, sizeof hdr, false))
-		return EX_DATAERR;
+		signal_return(&stream, EX_DATAERR);
 
 	if (be32toh(hdr.magic) != STREAM_HEADER_MAGIC) {
 		fprintf(stderr, "bad stream magic\n");
-		return EX_DATAERR;
+		signal_return(&stream, EX_DATAERR);
 	}
 
 	if (!read_hdr_ext(&stream, be32toh(hdr.version),
 			  be32toh(hdr.extra_header)))
-		return EX_DATAERR;
+		signal_return(&stream, EX_DATAERR);
 
 	sprintf(build_time, "%" PRIu64, be64toh(hdr.build_time));
 	setenv("STREAM_BUILD_TIME", build_time, 1);
 
 	if (!stage_transaction(program, "start"))
-		return EX_OSERR;
+		signal_return(&stream, EX_OSERR);
 
 	for (;;) {
 		struct stream_hunk_header	hhdr;
@@ -1025,7 +1031,7 @@ int main(int argc, char *argv[])
 		struct memory_block_signature	signature;
 
 		if (!stream_data_read(&stream, &hhdr, sizeof hhdr, true))
-			return EX_DATAERR;
+			signal_return(&stream, EX_DATAERR);
 
 		if (stream.is_eos)
 			break;
@@ -1049,7 +1055,7 @@ int main(int argc, char *argv[])
 		signature.hhdr       = &hhdr;
 
 		if (!process_hunk(program, &payload, &signature))
-			return EX_DATAERR;
+			signal_return(&stream, EX_DATAERR);
 	}
 
 	stream_data_close(&stream);
@@ -1058,5 +1064,7 @@ int main(int argc, char *argv[])
 	free(sigopts.crl_files.names);
 
 	if (!stage_transaction(program, "end"))
-		return EX_OSERR;
+		signal_return(&stream, EX_OSERR);
+
+	signal_return(&stream, EX_OK);
 }
