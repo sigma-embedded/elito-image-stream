@@ -29,6 +29,7 @@
 #include <fcntl.h>
 #include <assert.h>
 #include <inttypes.h>
+#include <netinet/ip.h>
 
 #include <getopt.h>
 #include <unistd.h>
@@ -41,11 +42,14 @@
 #include "signature.h"
 #include "decompression.h"
 
+#include "notify.h"
+
 #define CMD_HELP                0x1000
 #define CMD_VERSION             0x1001
 
 #define CMD_CAFILE		0x2000
 #define CMD_CRLFILE		0x2001
+#define CMD_NOTIFY_PORT		0x2002
 
 #define MAX_SIGNATURE_SIZE	(1 * 1024 * 1024)
 
@@ -62,7 +66,21 @@ static struct option const		CMDLINE_OPTIONS[] = {
 	{ "gpg-key",      required_argument, 0, 'G' },
 	{ "ca",           required_argument, 0, CMD_CAFILE },
 	{ "crl",          required_argument, 0, CMD_CRLFILE },
+	{ "notify-port",  required_argument, 0, CMD_NOTIFY_PORT },
 	{ NULL, 0, 0, 0 }
+};
+
+struct notify_info {
+	int		fd;
+	socklen_t	dst_len;
+
+	union {
+		struct sockaddr			addr;
+		struct sockaddr_storage		_st;
+		struct sockaddr_in		ip4;
+	}		dst;
+
+	size_t		cur_pos;
 };
 
 struct stream_data {
@@ -116,6 +134,108 @@ static void show_version(void)
 {
 	/* \todo: implement me */
 	exit(0);
+}
+
+static bool notification_send(struct notify_info *notify,
+			      void const *msg, size_t msg_len)
+{
+	ssize_t		l;
+
+	if (notify->fd == -1)
+		l = msg_len;
+	else
+		l = sendto(notify->fd, msg, msg_len, MSG_NOSIGNAL,
+			   &notify->dst.addr, notify->dst_len);
+
+	if (l < 0) {
+		perror("sendto(<notify>)");
+		return false;
+	}
+
+
+	/* we send a datagram and do not want to cope with fragmentation */
+	return (size_t)l == msg_len;
+}
+
+static bool notification_signal_exit(struct notify_info *notify,
+				     unsigned int code)
+{
+	struct notify_msg_exit		msg = {
+		.op		= 'E',
+		.code		= htobe32(code),
+	};
+
+	return notification_send(notify, &msg, sizeof msg);
+}
+
+static bool notification_send_length(struct notify_info *notify, size_t len)
+{
+	struct notify_msg_length	msg = {
+		.op		= 'L',
+		.length		= htobe64(len),
+	};
+
+	return notification_send(notify, &msg, sizeof msg);
+}
+
+static bool notification_handle_read(struct notify_info *notify, size_t cnt)
+{
+	struct notify_msg_read		msg = {
+		.op		= 'R',
+		.count		= htobe64(notify->cur_pos + cnt),
+	};
+
+	notify->cur_pos += cnt;
+
+	return notification_send(notify, &msg, sizeof msg);
+}
+
+static bool notification_init(struct notify_info *notify, int port)
+{
+	int const	ONE = 1;
+	int		fd;
+	int		rc;
+
+	if (port == -1) {
+		notify->fd = -1;
+		return true;
+	}
+
+	fd = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+	if (fd < 0) {
+		perror("socket(<notification>)");
+		return false;
+	}
+
+	rc = setsockopt(fd, SOL_SOCKET, SO_BROADCAST, &ONE, sizeof ONE);
+	if (rc < 0) {
+		perror("setsockopt(SO_BROADCAST)");
+		goto err;
+	}
+
+	notify->fd   = fd;
+
+	/* assume IPv4 for now; change for IPv6 when needed */
+	notify->dst.ip4 = (struct sockaddr_in) {
+		.sin_family	= AF_INET,
+		.sin_port	= htons(port),
+		.sin_addr	= { INADDR_BROADCAST },
+	};
+	notify->dst_len = sizeof notify->dst.ip4;
+	notify->cur_pos = 0;
+
+	if (!notification_send(notify, "S", 1))
+		/* when first datagram fails, next one will probably fail
+		 * too */
+		goto err;
+
+	return true;
+
+err:
+	close(fd);
+	notify->fd   = -1;
+
+	return false;
 }
 
 static bool	stream_data_open(struct stream_data *s, int fd)
@@ -838,6 +958,7 @@ int main(int argc, char *argv[])
 		.min_strength	=  0,
 	};
 	char			build_time[8*3 + 2];
+	int			notify_port = -1;
 
 	while (1) {
 		int         c = getopt_long(argc, argv, "vx:S:",
@@ -861,6 +982,10 @@ int main(int argc, char *argv[])
 		case CMD_CRLFILE:
 			if (!add_filename(&sigopts.crl_files, optarg))
 				return EX_OSERR;
+			break;
+
+		case CMD_NOTIFY_PORT:
+			notify_port = atoi(optarg);
 			break;
 
 		default:
