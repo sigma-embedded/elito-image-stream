@@ -101,7 +101,7 @@ static struct {
 #endif
 };
 
-static bool parse_signature(enum stream_signature *sig, 
+static bool parse_signature(enum stream_signature *sig,
 			    struct signature_algorithm **alg,
 			    char const *str)
 {
@@ -121,12 +121,12 @@ static bool parse_signature(enum stream_signature *sig,
 		signature_free(*alg);
 		*alg = new_alg;
 		*sig = new_sig;
-	} 
+	}
 
 	return new_alg != NULL;
 }
 
-static bool parse_compression(enum stream_compression *cmp, 
+static bool parse_compression(enum stream_compression *cmp,
 			      struct compression_algorithm **alg,
 			      char const *str)
 {
@@ -183,14 +183,14 @@ static char const *parse_hunk_opts(struct hunk *hunk, char const *opt)
 					   &hunk->sig_alg, key))
 		return next;
 
-	if (val == NULL && parse_compression(&hunk->compression, 
+	if (val == NULL && parse_compression(&hunk->compression,
 					     &hunk->compress_alg, key))
 		return next;
 
 	if (strcmp(key, "sig") == 0) {
 		if (val == NULL ||
 		    !parse_signature(&hunk->signature, &hunk->sig_alg, val)) {
-			fprintf(stderr, 
+			fprintf(stderr,
 				"unsupported signature algorithm '%s'\n", val);
 			return NULL;
 		}
@@ -202,7 +202,7 @@ static char const *parse_hunk_opts(struct hunk *hunk, char const *opt)
 		if (val == NULL ||
 		    !parse_compression(&hunk->compression, &hunk->compress_alg,
 				       val)) {
-			fprintf(stderr, 
+			fprintf(stderr,
 				"unsupported compression algorithm '%s'\n", val);
 			return NULL;
 		}

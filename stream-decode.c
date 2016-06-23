@@ -55,7 +55,7 @@ static struct option const		CMDLINE_OPTIONS[] = {
 	{ "help",         no_argument,       0, CMD_HELP },
 	{ "version",      no_argument,       0, CMD_VERSION },
 	{ "execute",      required_argument, 0, 'x' },
-	{ "verify",       no_argument, 	     0, 'v' },
+	{ "verify",       no_argument,	     0, 'v' },
 	{ "min-strength", required_argument, 0, 'S' },
 	{ "gpg-key",      required_argument, 0, 'G' },
 	{ "ca",           required_argument, 0, CMD_CAFILE },
@@ -314,9 +314,9 @@ create_sigalg(struct memory_block_signature const *signature)
 			goto err;
 		}
 
-		switch (signature_setopt(sigalg, "info-bin", sig, 
+		switch (signature_setopt(sigalg, "info-bin", sig,
 					 signature->pre.len)) {
-		case SIGNATURE_SETOPT_SUCCESS:	
+		case SIGNATURE_SETOPT_SUCCESS:
 			break;
 		case SIGNATURE_SETOPT_NOOPT:
 			fprintf(stderr, "signature prefix not supported\n");
@@ -369,7 +369,7 @@ static bool	finish_stream(char const *program,
 			fprintf(stderr, "failed to redirect stdin\n");
 			goto err;
 		}
-		
+
 		sprintf(size_str, "%zu", payload->len);
 		sprintf(type_str, "%u", payload->type);
 
@@ -424,7 +424,7 @@ static bool stage_transaction(char const *program, char const *stage)
 			fprintf(stderr, "failed to redirect stdin\n");
 			goto err;
 		}
-		
+
 		execlp(program, program, stage, "0", "0", NULL);
 		perror("execlp()");
 		_exit(1);
@@ -611,12 +611,12 @@ static bool	send_stream(char const *program,
 	close(pfds[0]);
 	pfds[0] = -1;
 
-	if (!decompressor_run(&decomp, decompalg, 
+	if (!decompressor_run(&decomp, decompalg,
 			      payload->mem.stream->fd, payload->mem.len)) {
 		fprintf(stderr, "failed to start decompressor\n");
 		goto err;
 	}
-		
+
 	for (len = 0; len < payload->len && !payload->mem.stream->is_eos;) {
 		ssize_t		l;
 
