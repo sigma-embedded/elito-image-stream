@@ -232,11 +232,12 @@ static char const *parse_hunk_opts(struct hunk *hunk, char const *opt)
 }
 
 static bool register_hunk(char const *desc, struct hunk **hunks,
-			  size_t *num_hunks)
+			  size_t *num_hunks, uint64_t *total_sz)
 {
 	char		*errptr;
 	char const	*ptr;
 	struct hunk	*new_hunks;
+	struct stat	st;
 
 	struct hunk	res = {
 		.type = strtoul(desc, &errptr, 0),
@@ -270,6 +271,11 @@ static bool register_hunk(char const *desc, struct hunk **hunks,
 	if (!res.filename) {
 		fprintf(stderr, "missing filename in '%s'\n", desc);
 		return false;
+	}
+
+	if (stat(res.filename, &st) >= 0) {
+		/* ignore errors here; they will be catched in dump_hunk() */
+		*total_sz += st.st_size;
 	}
 
 	new_hunks = realloc(*hunks, (*num_hunks+1) * sizeof *new_hunks);
@@ -314,6 +320,7 @@ static bool	dump_hunk(int ofd, struct hunk const *hunk,
 		return false;
 	}
 
+	/* this catches errors which were ignored in register_hunk */
 	if (fstat(hfd, &st) < 0) {
 		perror("stat()");
 		goto out;
@@ -400,11 +407,17 @@ int main(int argc, char *argv[])
 	size_t			num_hunks = 0;
 	size_t			i;
 	int			rand_fd;
+	uint64_t		total_sz = 0;
+
+	struct stream_header_v1	hdr_v1 = {
+		.total_len	= 0,
+	};
 
 	struct stream_header	hdr = {
-		.magic = htobe32(STREAM_HEADER_MAGIC),
-		.build_time = htobe64(time(NULL)),
-		.version = 0,
+		.magic		= htobe32(STREAM_HEADER_MAGIC),
+		.build_time	= htobe64(time(NULL)),
+		.version	= htobe32(1),
+		.extra_header	= htobe32(sizeof hdr_v1),
 	};
 
 	while (1) {
@@ -418,7 +431,7 @@ int main(int argc, char *argv[])
 		case CMD_HELP     :  show_help();
 		case CMD_VERSION  :  show_version();
 		case 'h' :
-			if (!register_hunk(optarg, &hunks, &num_hunks))
+			if (!register_hunk(optarg, &hunks, &num_hunks, &total_sz))
 				return EX_USAGE;
 			break;
 
@@ -437,7 +450,11 @@ int main(int argc, char *argv[])
 	}
 	close(rand_fd);
 
-	write_all(1, &hdr, sizeof hdr);
+	hdr_v1.total_len = htobe64(total_sz);
+
+	write_all(1, &hdr,    sizeof hdr);
+	write_all(1, &hdr_v1, sizeof hdr_v1);
+
 	for (i = 0; i < num_hunks; ++i) {
 		signature_setstrength(hunks[i].sig_alg, 0);
 
