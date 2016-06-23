@@ -87,6 +87,7 @@ struct stream_data {
 	int		fd;
 	bool		is_eos;
 	size_t		total_len;
+	struct notify_info	notify;
 };
 
 struct filename_list {
@@ -993,6 +994,9 @@ int main(int argc, char *argv[])
 			return EX_USAGE;
 		}
 	}
+
+	if (!notification_init(&stream.notify, notify_port))
+		return EX_OSERR;
 
 	if (!stream_data_open(&stream, 0))
 		return EX_OSERR;
