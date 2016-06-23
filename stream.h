@@ -53,6 +53,10 @@ struct stream_header {
 	be32_t		_unused3;
 } __packed;;
 
+struct stream_header_v1 {
+	be64_t		total_len;
+} __packed;
+
 struct stream_hunk_header {
 	be32_t		type;
 	be8_t		sign_type;
