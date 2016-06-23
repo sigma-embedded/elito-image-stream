@@ -770,6 +770,48 @@ static bool add_filename(struct filename_list *lst, char const *fname)
 	return true;
 }
 
+static bool read_hdr_ext(struct stream_data *stream, unsigned int version,
+			 size_t len)
+{
+	union {
+		struct stream_header_v1		v1;
+	}			hdr;
+
+	switch (version) {
+	case 0:
+		/* version 0 streams do not have this field */
+		len = 0;
+		break;
+
+	default:
+		/* read extra header as far as possible; we will catch errors
+		 * later */
+		if (!stream_data_read(stream, &hdr, MIN(len, sizeof hdr), false))
+			return false;
+
+		break;
+	}
+
+	/* consume the extra header information of future versions; it is
+	 * assumed that they do not contain important information and are
+	 * e.g. for statistic purposes only.  There must be set senseful
+	 * default values */
+	if (len > sizeof hdr) {
+		size_t		sz = len - sizeof hdr;
+
+		while (sz > 0) {
+			char	buf[64];
+
+			if (!stream_data_read(stream, buf, MIN(sizeof buf, sz),
+					      false))
+				return false;
+
+			sz -= sizeof buf;
+		}
+	}
+
+	return true;
+}
 int main(int argc, char *argv[])
 {
 	struct stream_data	stream;
@@ -820,6 +862,10 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "bad stream magic\n");
 		return EX_DATAERR;
 	}
+
+	if (!read_hdr_ext(&stream, be32toh(hdr.version),
+			  be32toh(hdr.extra_header)))
+		return EX_DATAERR;
 
 	sprintf(build_time, "%" PRIu64, be64toh(hdr.build_time));
 	setenv("STREAM_BUILD_TIME", build_time, 1);

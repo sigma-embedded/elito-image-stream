@@ -48,7 +48,8 @@ struct stream_header {
 	be32_t		version;
 	be8_t		salt[8];
 	be64_t		build_time;
-	be32_t		_unused2;
+	/* size of extra header */
+	be32_t		extra_header;
 	be32_t		_unused3;
 } __packed;;
 
