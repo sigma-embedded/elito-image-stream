@@ -49,6 +49,8 @@
 
 #define MAX_SIGNATURE_SIZE	(1 * 1024 * 1024)
 
+#define SIZE_UNSET		(~((size_t)0))
+
 #define PROCESS_SIZE	(1024*1024)
 
 static struct option const		CMDLINE_OPTIONS[] = {
@@ -66,6 +68,7 @@ static struct option const		CMDLINE_OPTIONS[] = {
 struct stream_data {
 	int		fd;
 	bool		is_eos;
+	size_t		total_len;
 };
 
 struct filename_list {
@@ -808,6 +811,20 @@ static bool read_hdr_ext(struct stream_data *stream, unsigned int version,
 
 			sz -= sizeof buf;
 		}
+	}
+
+	switch (version) {
+	case 0:
+		stream->total_len = SIZE_UNSET;
+		break;
+
+	default:
+	case 1:
+		if (len < sizeof hdr.v1)
+			return false;
+
+		stream->total_len = be64toh(hdr.v1.total_len);
+		break;
 	}
 
 	return true;
