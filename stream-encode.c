@@ -46,12 +46,14 @@ static struct option const		CMDLINE_OPTIONS[] = {
 	{ "help",        no_argument,       0, CMD_HELP },
 	{ "version",     no_argument,       0, CMD_VERSION },
 	{ "hunk",        required_argument, 0, 'h' },
+	{ "stream-version", required_argument, 0, 'V' },
 	{ NULL, 0, 0, 0 }
 };
 
 static void show_help(void)
 {
-	printf("Usage: stream-encode [--hunk|-h <type>[,<opts>]!<filename>]\n");
+	printf("Usage: stream-encode [-V <version>]\n"
+	       "            [--hunk|-h <type>[,<opts>]!<filename>]\n");
 	exit(0);
 }
 
@@ -408,6 +410,7 @@ int main(int argc, char *argv[])
 	size_t			i;
 	int			rand_fd;
 	uint64_t		total_sz = 0;
+	unsigned int		stream_version = 1;
 
 	struct stream_header_v1	hdr_v1 = {
 		.total_len	= 0,
@@ -416,12 +419,10 @@ int main(int argc, char *argv[])
 	struct stream_header	hdr = {
 		.magic		= htobe32(STREAM_HEADER_MAGIC),
 		.build_time	= htobe64(time(NULL)),
-		.version	= htobe32(1),
-		.extra_header	= htobe32(sizeof hdr_v1),
 	};
 
 	while (1) {
-		int         c = getopt_long(argc, argv, "h:",
+		int         c = getopt_long(argc, argv, "h:V:",
 					    CMDLINE_OPTIONS, 0);
 
 		if (c==-1)
@@ -433,6 +434,10 @@ int main(int argc, char *argv[])
 		case 'h' :
 			if (!register_hunk(optarg, &hunks, &num_hunks, &total_sz))
 				return EX_USAGE;
+			break;
+
+		case 'V':
+			stream_version = atoi(optarg);
 			break;
 
 		default:
@@ -450,10 +455,33 @@ int main(int argc, char *argv[])
 	}
 	close(rand_fd);
 
-	hdr_v1.total_len = htobe64(total_sz);
+	hdr.version = htobe32(stream_version);
 
-	write_all(1, &hdr,    sizeof hdr);
-	write_all(1, &hdr_v1, sizeof hdr_v1);
+	switch (stream_version) {
+	case 0:
+		break;
+
+	case 1:
+		hdr.extra_header = htobe32(sizeof hdr_v1);
+		break;
+
+	default:
+		fprintf(stderr, "Unsupport stream version %u\n",
+			stream_version);
+		return EX_USAGE;
+	}
+
+	write_all(1, &hdr, sizeof hdr);
+
+	switch (stream_version) {
+	case 1:
+		hdr_v1.total_len = htobe64(total_sz);
+		write_all(1, &hdr_v1, sizeof hdr_v1);
+		break;
+
+	default:
+		break;
+	}
 
 	for (i = 0; i < num_hunks; ++i) {
 		signature_setstrength(hunks[i].sig_alg, 0);
