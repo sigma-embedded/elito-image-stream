@@ -87,6 +87,8 @@ struct stream_data {
 	int			fd;
 	bool			is_eos;
 	size_t			total_len;
+	void const		*extra_salt;
+	size_t			extra_salt_len;
 	struct notify_info	notify;
 };
 
@@ -859,7 +861,9 @@ static bool	process_hunk(char const *program,
 	if (!send_stream(program, notify, payload, sigalg, decompalg))
 		goto err;
 
-	if (!signature_update(sigalg, signature->shdr->salt,
+	if (!signature_update(sigalg, payload->mem.stream->extra_salt,
+			      payload->mem.stream->extra_salt_len) ||
+	    !signature_update(sigalg, signature->shdr->salt,
 			      sizeof signature->shdr->salt) ||
 	    !signature_update(sigalg, signature->hhdr,
 			      sizeof *signature->hhdr))
@@ -941,6 +945,9 @@ static bool read_hdr_ext(struct stream_data *stream, unsigned int version,
 	switch (version) {
 	case 0:
 		stream->total_len = SIZE_UNSET;
+		stream->extra_salt     = NULL;
+		stream->extra_salt_len = 0;
+		stream->revision       = 0;
 		break;
 
 	default:
@@ -949,6 +956,9 @@ static bool read_hdr_ext(struct stream_data *stream, unsigned int version,
 			return false;
 
 		stream->total_len = be64toh(hdr.v1.total_len);
+		stream->extra_salt     = NULL;
+		stream->extra_salt_len = 0;
+		stream->revision       = 0;
 		break;
 	}
 

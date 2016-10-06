@@ -71,6 +71,9 @@ struct hunk {
 
 	struct signature_algorithm *	sig_alg;
 	struct compression_algorithm *	compress_alg;
+
+	void const *			extra_salt;
+	size_t				extra_salt_len;
 };
 
 static struct {
@@ -382,7 +385,8 @@ static bool	dump_hunk(int ofd, struct hunk const *hunk,
 			goto out;
 	}
 
-	if (!signature_update(sig_alg, shdr->salt, sizeof shdr->salt) ||
+	if (!signature_update(sig_alg, hunk->extra_salt, hunk->extra_salt_len) ||
+	    !signature_update(sig_alg, shdr->salt, sizeof shdr->salt) ||
 	    !signature_update(sig_alg, &hdr,       sizeof hdr))
 		goto out;
 
