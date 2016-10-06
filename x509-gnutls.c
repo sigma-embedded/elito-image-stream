@@ -78,7 +78,7 @@ static bool x509_gnutls_mmap(char const *filename, gnutls_datum_t *dat)
 	int		fd = open(filename, O_RDONLY);
 	struct stat	st;
 
-	if (!fd) {
+	if (fd < 0) {
 		fprintf(stderr, "open(%s): %m\n", filename);
 		return false;
 	}
