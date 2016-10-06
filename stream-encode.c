@@ -416,7 +416,7 @@ int main(int argc, char *argv[])
 	int			rand_fd;
 	uint64_t		total_sz = 0;
 	uint64_t		revision = 0;
-	unsigned int		stream_version = 1;
+	unsigned int		stream_version = 2;
 
 	union {
 		struct stream_header_v1	v1;
