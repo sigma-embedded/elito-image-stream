@@ -946,7 +946,7 @@ static bool read_hdr_ext(struct stream_data *stream, unsigned int version,
 
 	switch (version) {
 	case 0:
-		stream->total_len = SIZE_UNSET;
+		stream->total_len      = SIZE_UNSET;
 		stream->extra_salt     = NULL;
 		stream->extra_salt_len = 0;
 		stream->revision       = 0;
@@ -957,7 +957,7 @@ static bool read_hdr_ext(struct stream_data *stream, unsigned int version,
 		if (len < sizeof hdr.v1)
 			return false;
 
-		stream->total_len = be64toh(hdr.v1.total_len);
+		stream->total_len      = be64toh(hdr.v1.total_len);
 		stream->extra_salt     = NULL;
 		stream->extra_salt_len = 0;
 		stream->revision       = 0;
