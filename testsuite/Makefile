@@ -7,6 +7,8 @@ CFLAGS ?= -Wall -W -std=gnu99 -D_FORTIFY_SOURCE=2 -O2
 
 all:	.stamps/ca .stamps/build .stamps/stream .stamps/tests
 
+compile:	.stamps/build
+
 clean:
 	rm -rf .stamps ca bin tmp
 
