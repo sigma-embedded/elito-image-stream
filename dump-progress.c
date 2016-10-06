@@ -49,7 +49,11 @@ int main(int argc, char *argv[])
 		return EX_OSERR;
 	}
 
-	setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &ONE, sizeof ONE);
+	rc = setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &ONE, sizeof ONE);
+	if (rc < 0) {
+		perror("setsockopt(SO_REUSEADDR)");
+		return EX_OSERR;
+	}
 
 	rc = bind(fd, (void const *)&ip4, sizeof ip4);
 	if (rc < 0) {
