@@ -47,6 +47,7 @@ static struct option const		CMDLINE_OPTIONS[] = {
 	{ "version",     no_argument,       0, CMD_VERSION },
 	{ "hunk",        required_argument, 0, 'h' },
 	{ "stream-version", required_argument, 0, 'V' },
+	{ "revision",       required_argument, 0, 'R' },
 	{ NULL, 0, 0, 0 }
 };
 
@@ -414,10 +415,12 @@ int main(int argc, char *argv[])
 	size_t			i;
 	int			rand_fd;
 	uint64_t		total_sz = 0;
+	uint64_t		revision = 0;
 	unsigned int		stream_version = 1;
 
 	union {
 		struct stream_header_v1	v1;
+		struct stream_header_v2	v2;
 	}			hdrX;
 
 	struct stream_header	hdr = {
@@ -442,6 +445,11 @@ int main(int argc, char *argv[])
 
 		case 'V':
 			stream_version = atoi(optarg);
+			break;
+
+		case 'R':
+			revision = strtoull(optarg, NULL, 0);
+			/* TODO: check validity? */
 			break;
 
 		default:
@@ -469,6 +477,10 @@ int main(int argc, char *argv[])
 		hdr.extra_header = htobe32(sizeof hdrX.v1);
 		break;
 
+	case 2:
+		hdr.extra_header = htobe32(sizeof hdrX.v2);
+		break;
+
 	default:
 		fprintf(stderr, "Unsupport stream version %u\n",
 			stream_version);
@@ -483,12 +495,29 @@ int main(int argc, char *argv[])
 		write_all(1, &hdrX.v1, sizeof hdrX.v1);
 		break;
 
+	case 2:
+		hdrX.v2.total_len = htobe64(total_sz);
+		hdrX.v2.revision  = htobe64(revision);
+		write_all(1, &hdrX.v2, sizeof hdrX.v2);
+		break;
+
 	default:
 		break;
 	}
 
 	for (i = 0; i < num_hunks; ++i) {
 		signature_setstrength(hunks[i].sig_alg, 0);
+
+		switch (stream_version) {
+		case 2:
+			hunks[i].extra_salt = &hdrX.v2.revision;
+			hunks[i].extra_salt_len = sizeof hdrX.v2.revision;
+			break;
+
+		default:
+			break;
+		}
+
 
 		if (!dump_hunk(1, &hunks[i], &hdr))
 			return EX_DATAERR;

@@ -90,6 +90,7 @@ struct stream_data {
 	void const		*extra_salt;
 	size_t			extra_salt_len;
 	struct notify_info	notify;
+	uint64_t		revision;
 };
 
 struct filename_list {
@@ -907,6 +908,7 @@ static bool read_hdr_ext(struct stream_data *stream, unsigned int version,
 {
 	union {
 		struct stream_header_v1		v1;
+		struct stream_header_v2		v2;
 	}			hdr;
 
 	switch (version) {
@@ -960,6 +962,16 @@ static bool read_hdr_ext(struct stream_data *stream, unsigned int version,
 		stream->extra_salt_len = 0;
 		stream->revision       = 0;
 		break;
+
+	case 2:
+		if (len < sizeof hdr.v2)
+			return false;
+
+		stream->total_len      = be64toh(hdr.v2.total_len);
+		stream->revision       = be64toh(hdr.v2.revision);
+		stream->extra_salt     = &stream->revision;
+		stream->extra_salt_len = sizeof stream->revision;
+		break;
 	}
 
 	return true;
@@ -979,6 +991,7 @@ int main(int argc, char *argv[])
 		.min_strength	=  0,
 	};
 	char			build_time[8*3 + 2];
+	char			revision[8*3 + 2];
 	int			notify_port = -1;
 
 	while (1) {
@@ -1035,6 +1048,9 @@ int main(int argc, char *argv[])
 
 	sprintf(build_time, "%" PRIu64, be64toh(hdr.build_time));
 	setenv("STREAM_BUILD_TIME", build_time, 1);
+
+	sprintf(revision, "%" PRIx64, stream.revision);
+	setenv("STREAM_REVISION", revision, 1);
 
 	notification_send_length(&stream.notify, stream.total_len);
 
