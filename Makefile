@@ -59,6 +59,10 @@ _bin_PROGRAMS = $(addsuffix $(progsuffix),$(addprefix $(progprefix),$(bin_PROGRA
 
 all:	$(_bin_PROGRAMS) dump-progress
 
+ci-build:
+	$(MAKE) all
+	$(MAKE) -C testsuite compile
+
 .SECONDEXPANSION:
 $(_bin_PROGRAMS):$(progprefix)%$(progsuffix):	$$($$*_SOURCES) Makefile
 	$(CC) $(AM_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) $(LDFLAGS) $(filter %.c,$^) -o $@ $(LIBS)
@@ -73,4 +77,4 @@ install:	$(_bin_PROGRAMS) | $(DESTDIR)$(bindir)
 clean:
 	rm -f $(_bin_PROGRAMS)
 
-.PHONY:	install all
+.PHONY:	install all ci-build
