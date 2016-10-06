@@ -483,11 +483,11 @@ static bool	finish_stream(char const *program,
 		fd_null = open("/dev/null", O_RDONLY|O_NOCTTY);
 		if (fd_null < 0) {
 			perror("open(/dev/null)");
-			goto err;
+			goto err_child;
 		} else if (fd_null != 0) {
 			fprintf(stderr, "failed to redirect stdin\n");
 			close(fd_null);
-			goto err;
+			goto err_child;
 		}
 
 		sprintf(size_str, "%zu", payload->len);
@@ -495,6 +495,8 @@ static bool	finish_stream(char const *program,
 
 		execlp(program, program, "finish", type_str, size_str, NULL);
 		perror("execlp()");
+
+err_child:
 		_exit(1);
 	}
 
@@ -539,15 +541,16 @@ static bool stage_transaction(char const *program, char const *stage)
 		fd_null = open("/dev/null", O_RDONLY|O_NOCTTY);
 		if (fd_null < 0) {
 			perror("open(/dev/null)");
-			goto err;
+			goto err_child;
 		} else if (fd_null != 0) {
 			fprintf(stderr, "failed to redirect stdin\n");
 			close(fd_null);
-			goto err;
+			goto err_child;
 		}
 
 		execlp(program, program, stage, "0", "0", NULL);
 		perror("execlp()");
+err_child:
 		_exit(1);
 	}
 
