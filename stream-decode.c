@@ -486,6 +486,7 @@ static bool	finish_stream(char const *program,
 			goto err;
 		} else if (fd_null != 0) {
 			fprintf(stderr, "failed to redirect stdin\n");
+			close(fd_null);
 			goto err;
 		}
 
@@ -541,6 +542,7 @@ static bool stage_transaction(char const *program, char const *stage)
 			goto err;
 		} else if (fd_null != 0) {
 			fprintf(stderr, "failed to redirect stdin\n");
+			close(fd_null);
 			goto err;
 		}
 
