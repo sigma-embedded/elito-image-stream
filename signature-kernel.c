@@ -159,7 +159,8 @@ struct signature_algorithm *	signature_kernel_create(char const *hname,
 		.salg_type = "hash",
 	};
 
-	strncpy((char *)sa.salg_name, hname, sizeof sa.salg_name);
+	strncpy((char *)sa.salg_name, hname, sizeof sa.salg_name - 1);
+	sa.salg_name[sizeof sa.salg_name - 1] = '\0';
 
 	kalg = calloc(1, sizeof *kalg + (digest_len+7) / 8);
 	if (!kalg) {
