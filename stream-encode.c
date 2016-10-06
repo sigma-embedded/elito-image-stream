@@ -416,9 +416,9 @@ int main(int argc, char *argv[])
 	uint64_t		total_sz = 0;
 	unsigned int		stream_version = 1;
 
-	struct stream_header_v1	hdr_v1 = {
-		.total_len	= 0,
-	};
+	union {
+		struct stream_header_v1	v1;
+	}			hdrX;
 
 	struct stream_header	hdr = {
 		.magic		= htobe32(STREAM_HEADER_MAGIC),
@@ -466,7 +466,7 @@ int main(int argc, char *argv[])
 		break;
 
 	case 1:
-		hdr.extra_header = htobe32(sizeof hdr_v1);
+		hdr.extra_header = htobe32(sizeof hdrX.v1);
 		break;
 
 	default:
@@ -479,8 +479,8 @@ int main(int argc, char *argv[])
 
 	switch (stream_version) {
 	case 1:
-		hdr_v1.total_len = htobe64(total_sz);
-		write_all(1, &hdr_v1, sizeof hdr_v1);
+		hdrX.v1.total_len = htobe64(total_sz);
+		write_all(1, &hdrX.v1, sizeof hdrX.v1);
 		break;
 
 	default:
