@@ -57,6 +57,9 @@ inline static bool signature_reset(struct signature_algorithm *alg)
 inline static bool signature_update(struct signature_algorithm *alg,
 				    void const *data, size_t len)
 {
+	if (len == 0)
+		return true;
+
 	return alg->update(alg, data, len);
 }
 
