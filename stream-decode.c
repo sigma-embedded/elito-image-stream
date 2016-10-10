@@ -973,7 +973,8 @@ static bool read_hdr_ext(struct stream_data *stream, unsigned int version,
 			return false;
 
 		stream->total_len      = be64toh(hdr.v2.total_len);
-		stream->revision       = be64toh(hdr.v2.revision);
+		/* keep it big-endian; it is used as a salt later */
+		stream->revision       = hdr.v2.revision;
 		stream->extra_salt     = &stream->revision;
 		stream->extra_salt_len = sizeof stream->revision;
 		break;
@@ -1054,7 +1055,7 @@ int main(int argc, char *argv[])
 	sprintf(build_time, "%" PRIu64, be64toh(hdr.build_time));
 	setenv("STREAM_BUILD_TIME", build_time, 1);
 
-	sprintf(revision, "%" PRIx64, stream.revision);
+	sprintf(revision, "%" PRIx64, be64toh(stream.revision));
 	setenv("STREAM_REVISION", revision, 1);
 
 	notification_send_length(&stream.notify, stream.total_len);
