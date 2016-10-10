@@ -429,7 +429,7 @@ int main(int argc, char *argv[])
 	};
 
 	while (1) {
-		int         c = getopt_long(argc, argv, "h:V:",
+		int         c = getopt_long(argc, argv, "h:V:R:",
 					    CMDLINE_OPTIONS, 0);
 
 		if (c==-1)
