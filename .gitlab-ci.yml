@@ -1,5 +1,4 @@
 build:
   image: docker/sigma-ci-fedora:latest
   script:
-  - make
-  - make -C testsuite SKIP_MD5=true DIGEST_PROVIDERS=gnutls
+  - make ci-build SKIP_MD5=true DIGEST_PROVIDERS=gnutls

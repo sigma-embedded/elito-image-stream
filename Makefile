@@ -67,7 +67,7 @@ all:	$(_bin_PROGRAMS) dump-progress
 
 ci-build:
 	$(MAKE) all
-	$(MAKE) -C testsuite compile
+	$(MAKE) check-compile
 
 .SECONDEXPANSION:
 $(_bin_PROGRAMS):$(progprefix)%$(progsuffix):	$$($$*_SOURCES) Makefile
