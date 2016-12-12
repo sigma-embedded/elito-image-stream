@@ -26,8 +26,15 @@ struct notify_msg_start {
 	uint8_t		op;		/* 'S' */
 } __packed;
 
-/* sent exactly once immediately after 'S' and tells number of uncompressed
- * octets */
+/* sent optionally after 'S' and tells that a boolean flag ('is_flag' is true)
+ * or a keyval parameter has been sent */
+struct notify_msg_param {
+	uint8_t		op;		/* 'P' */
+	uint8_t		is_flag;
+} __packed;
+
+/* sent exactly once immediately after 'S' or 'P' and tells number of
+ * uncompressed octets */
 struct notify_msg_length {
 	uint8_t		op;		/* 'L' */
 	be64_t		length;

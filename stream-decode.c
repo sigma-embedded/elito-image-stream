@@ -91,6 +91,9 @@ struct stream_data {
 	size_t			extra_salt_len;
 	struct notify_info	notify;
 	uint64_t		revision;
+
+	unsigned char		queued_char;
+	size_t			num_queued_char;
 };
 
 struct filename_list {
@@ -238,6 +241,7 @@ static bool	stream_data_open(struct stream_data *s, int fd)
 {
 	s->fd = fd;
 	s->is_eos = false;
+	s->num_queued_char = 0;
 	return fd >= 0;
 }
 
@@ -246,10 +250,191 @@ static void	stream_data_close(struct stream_data *s)
 	close(s->fd);
 }
 
+static bool	_read_token(struct stream_data *s, char *buf, size_t buf_sz,
+			    bool is_key, unsigned char *end)
+{
+	unsigned char		end_c = 1;
+
+	if (buf_sz == 0)
+		return false;
+
+	while (buf_sz > 0) {		/* reserve one slot for '\0' */
+		unsigned char	c;
+		ssize_t		l = read(s->fd, &c, sizeof c);
+		bool		is_valid;
+
+		if (l < 0) {
+			perror("read()");
+			break;
+		}
+
+		if (l == 0 || c == '\n' || c == ' ') {
+			end_c = '\0';
+			break;
+		}
+
+		/* '=' is not allowed within keys */
+		if (is_key && c == '=') {
+			end_c = c;
+			break;
+		}
+
+
+		is_valid = ((c >= 'a' && c <= 'z') ||
+			    (c >= 'A' && c <= 'Z') ||
+			    (c >= '0' && c <= '9') ||
+			    (c == '_'));
+
+		if (!is_valid && !is_key)
+			is_valid = (c == '/' || c == '+' ||
+				    c == '-' || c == '=' ||
+				    c == '.' || c == ':');
+
+		if (!is_valid)
+			return false;
+
+		*buf++ = c;
+		--buf_sz;
+	}
+
+	if (buf_sz == 0) {
+		/* too much data */
+		return false;
+	}
+
+	*end = end_c;
+	*buf = '\0';
+
+	return true;
+}
+
+#define PARAM_PREFIX_FLAG	"X_RESCUE_FLAG_"
+#define PARAM_PREFIX_KEYVAL	"X_RESCUE_VALUE_"
+#define PARAM_KEY_SZ		32
+#define PARAM_VAL_SZ		1024
+
+static bool _read_params_bool(struct stream_data *s)
+{
+	static struct notify_msg_param const	notify_msg = {
+		.op		= 'P',
+		.is_flag	= 1,
+	};
+
+	char		param[sizeof(PARAM_PREFIX_FLAG) + PARAM_KEY_SZ];
+	char		*p;
+	unsigned char	end_c;
+
+	notification_send(&s->notify, &notify_msg, sizeof notify_msg);
+
+	p = stpcpy(param, PARAM_PREFIX_FLAG);
+	if (!_read_token(s, p, PARAM_KEY_SZ, true, &end_c) || end_c != '\0') {
+		fprintf(stderr, "bad flag name\n");
+		return false;
+	}
+
+	if (setenv(param, "1", true) < 0) {
+		perror("setenv()");
+		return false;
+	}
+
+	return true;
+}
+
+static bool _read_params_keyval(struct stream_data *s)
+{
+	static struct notify_msg_param const	notify_msg = {
+		.op		= 'P',
+		.is_flag	= 0,
+	};
+
+	char		key[sizeof(PARAM_PREFIX_KEYVAL) + PARAM_KEY_SZ];
+	char		val[PARAM_VAL_SZ];
+	char		*p;
+	unsigned char	end_c;
+
+	notification_send(&s->notify, &notify_msg, sizeof notify_msg);
+
+	p = stpcpy(key, PARAM_PREFIX_KEYVAL);
+	if (!_read_token(s, p, PARAM_KEY_SZ, true, &end_c) || end_c != '=') {
+		fprintf(stderr, "bad key name\n");
+		return false;
+	}
+
+	if (!_read_token(s, val, sizeof val, false, &end_c) || end_c != '\0') {
+		fprintf(stderr, "bad value name\n");
+		return false;
+	}
+
+	if (setenv(key, val, true) < 0) {
+		perror("setenv()");
+		return false;
+	}
+
+	return true;
+}
+
+static bool	stream_data_read_params(struct stream_data *s)
+{
+	bool			rc = false;
+
+	if (s->num_queued_char > 0) {
+		fprintf(stderr, "internal error: data already queued internally\n");
+		return false;
+	}
+
+	for (;;) {
+		unsigned char	c;
+		ssize_t		l = read(s->fd, &c, sizeof c);
+
+		if (l < 0) {
+			perror("read()");
+			rc = false;
+			break;
+		}
+
+		if (l == 0) {
+			rc = true;
+			break;
+		}
+
+		switch (c) {
+		case '+':
+			rc = _read_params_bool(s);
+			break;
+
+		case '?':
+			rc = _read_params_keyval(s);
+			break;
+
+		default:
+			s->queued_char = c;
+			s->num_queued_char = 1;
+			rc = true;
+			goto out;
+		}
+
+		if (!rc)
+			break;
+	}
+
+out:
+	return rc;
+}
+
 static bool	stream_data_read(struct stream_data *s, void *buf, size_t cnt,
 				 bool ignore_eos)
 {
 	size_t		tlen = 0;
+
+	if (cnt > 0 && s->num_queued_char > 0) {
+		size_t		l = MIN(s->num_queued_char, cnt);
+
+		memcpy(buf, &s->queued_char, l);
+		buf += l;
+		cnt -= l;
+
+		s->num_queued_char -= l;
+	}
 
 	while (cnt > 0) {
 		ssize_t		l = read(s->fd, buf, cnt);
@@ -1039,6 +1224,9 @@ int main(int argc, char *argv[])
 
 	if (!stream_data_open(&stream, 0))
 		signal_return(&stream, EX_OSERR);
+
+	if (!stream_data_read_params(&stream))
+		signal_return(&stream, EX_DATAERR);
 
 	if (!stream_data_read(&stream, &hdr, sizeof hdr, false))
 		signal_return(&stream, EX_DATAERR);
