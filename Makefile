@@ -7,6 +7,7 @@ abs_top_srcdir := $(abspath  $(dir $(firstword ${MAKEFILE_LIST})))
 abs_top_builddir := $(abspath .)
 
 VPATH  = ${abs_top_srcdir}
+MAKE_ORIG = ${MAKE} -f $(firstword ${MAKEFILE_LIST})
 
 bin_PROGRAMS = stream-encode stream-decode
 
@@ -82,8 +83,13 @@ install:	$(_bin_PROGRAMS) | $(DESTDIR)$(bindir)
 clean:
 	rm -f $(_bin_PROGRAMS)
 
-check:	$(_bin_PROGRAMS)
+check-%:	FORCE
 	@mkdir -p testsuite
-	${MAKE} -C testsuite -f ${abs_top_srcdir}/testsuite/Makefile all -I${abs_top_srcdir}/testsuite
+	${MAKE} -C testsuite -f ${abs_top_srcdir}/testsuite/Makefile -I${abs_top_srcdir}/testsuite $*
 
-.PHONY:	install all ci-build check
+check:	check-compile $(_bin_PROGRAMS)
+	${MAKE_ORIG} check-all
+
+FORCE:
+
+.PHONY:	install all ci-build FORCE
