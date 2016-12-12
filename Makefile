@@ -82,4 +82,8 @@ install:	$(_bin_PROGRAMS) | $(DESTDIR)$(bindir)
 clean:
 	rm -f $(_bin_PROGRAMS)
 
-.PHONY:	install all ci-build
+check:	$(_bin_PROGRAMS)
+	@mkdir -p testsuite
+	${MAKE} -C testsuite -f ${abs_top_srcdir}/testsuite/Makefile all -I${abs_top_srcdir}/testsuite
+
+.PHONY:	install all ci-build check
