@@ -140,7 +140,7 @@ for encoder in $ENCODERS; do
 	    SKIP_POST=false
 
 	    start "  Processing with '$decoder'" 
-	    runit $decoder $DECODEOPTS --notify-port 6666 --execute "`pwd`/nullcat" 3>&1
+	    runit $decoder $DECODEOPTS --notify-port 6666 --execute "nullcat" 3>&1
 	    ok
 
 	    ! $SKIP_POST || continue

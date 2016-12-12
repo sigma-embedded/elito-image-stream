@@ -5,6 +5,13 @@ STREAM_TMPDIR ?= tmp
 
 CFLAGS ?= -Wall -W -std=gnu99 -D_FORTIFY_SOURCE=2 -O2
 
+abs_top_srcdir := $(abspath  $(dir $(firstword ${MAKEFILE_LIST})))
+abs_top_builddir := $(abspath .)
+
+override VPATH  = ${abs_top_srcdir}
+
+ORIG_MAKE = ${MAKE} -f $(firstword ${MAKEFILE_LIST})
+
 all:	.stamps/ca .stamps/build .stamps/stream .stamps/tests
 
 compile:	.stamps/build
@@ -16,12 +23,12 @@ clean:
 	mkdir -p $@
 
 .stamps/ca: | .stamps
-	$(MAKE) _mode=ca init-ca CA_DIR=ca/valid
-	$(MAKE) _mode=ca init-ca CA_DIR=ca/invalid
+	$(ORIG_MAKE) _mode=ca init-ca CA_DIR=ca/valid
+	$(ORIG_MAKE) _mode=ca init-ca CA_DIR=ca/invalid
 	touch $@
 
 .stamps/%: FORCE | .stamps
-	$(MAKE) _mode=$* $*
+	$(ORIG_MAKE) _mode=$* $*
 
 .stamps/stream: .stamps/build
 .stamps/tests:	.stamps/stream .stamps/build

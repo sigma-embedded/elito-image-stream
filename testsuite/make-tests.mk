@@ -1,5 +1,5 @@
 I := $(STREAM_TMPDIR)
-R  = runtest.sh
+R  = ${abs_top_srcdir}/runtest.sh
 
 _genprog = \
 $(if $(patsubst -%,,$2),\
@@ -12,7 +12,7 @@ $1$2,\
 
 genprog = $(strip $(foreach p,$2, $(call _genprog,$1,$p)))
 
-run = @env BASE_ID=$(strip $1) bash $R \
+run = @env PATH=${abs_top_srcdir}:$${PATH} BASE_ID=$(strip $1) bash $R \
   '$(call genprog,bin/stream-encode_,$2)' \
   '$(call genprog,bin/stream-decode_,$3)' \
   '$(addsuffix .in,$(addprefix $(STREAM_TMPDIR)/,$4))' \

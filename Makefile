@@ -3,6 +3,11 @@ AM_CFLAGS = -std=gnu99 -Wall -W -Wno-missing-field-initializers -D_GNU_SOURCE \
  -Wno-unused-parameter $(AM_CFLAGS-y) $(CFLAGS_$(DIGEST_PROVIDER))
 AM_LDFLAGS = -Wl,-as-needed
 
+abs_top_srcdir := $(abspath  $(dir $(firstword ${MAKEFILE_LIST})))
+abs_top_builddir := $(abspath .)
+
+VPATH  = ${abs_top_srcdir}
+
 bin_PROGRAMS = stream-encode stream-decode
 
 ENABLE_ZLIB = y
