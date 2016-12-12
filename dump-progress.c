@@ -66,6 +66,7 @@ int main(int argc, char *argv[])
 			unsigned char	code;
 
 			struct notify_msg_start		start;
+			struct notify_msg_param		param;
 			struct notify_msg_length	length;
 			struct notify_msg_read		read;
 			struct notify_msg_substart	substart;
@@ -81,6 +82,11 @@ int main(int argc, char *argv[])
 		switch (msg.code) {
 		case 'S':
 			printf("start\n");
+			break;
+
+		case 'P':
+			printf("parameter (%s)\n",
+			       msg.param.is_flag ? "flag" : "keyval");
 			break;
 
 		case 'L':
