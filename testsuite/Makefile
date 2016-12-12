@@ -10,7 +10,7 @@ abs_top_builddir := $(abspath .)
 
 override VPATH  = ${abs_top_srcdir}
 
-ORIG_MAKE = ${MAKE} -f $(firstword ${MAKEFILE_LIST})
+MAKE_ORIG = ${MAKE} -f $(firstword ${MAKEFILE_LIST})
 
 all:	.stamps/ca .stamps/build .stamps/stream .stamps/tests
 
@@ -23,12 +23,12 @@ clean:
 	mkdir -p $@
 
 .stamps/ca: | .stamps
-	$(ORIG_MAKE) _mode=ca init-ca CA_DIR=ca/valid
-	$(ORIG_MAKE) _mode=ca init-ca CA_DIR=ca/invalid
+	$(MAKE_ORIG) _mode=ca init-ca CA_DIR=ca/valid
+	$(MAKE_ORIG) _mode=ca init-ca CA_DIR=ca/invalid
 	touch $@
 
 .stamps/%: FORCE | .stamps
-	$(ORIG_MAKE) _mode=$* $*
+	$(MAKE_ORIG) _mode=$* $*
 
 .stamps/stream: .stamps/build
 .stamps/tests:	.stamps/stream .stamps/build
