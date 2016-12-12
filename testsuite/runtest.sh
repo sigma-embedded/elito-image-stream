@@ -122,6 +122,7 @@ trap "cleanup" EXIT
 
 set -e
 
+export EXPECT_FLAGS
 export O=$tmpdir/
 for encoder in $ENCODERS; do
     for infile in $INFILES; do
@@ -135,14 +136,26 @@ for encoder in $ENCODERS; do
 
 	! $GREMLIN || bin/gremlin $tmpdir/stream
 
-	STDIN=$tmpdir/stream
+	{
+	    echo '+FOO +BAR ?KEY=VAL'
+	    cat $tmpdir/stream 
+	} >> $tmpdir/stream.params
+
 	for decoder in $DECODERS; do
 	    SKIP_POST=false
 
+	    EXPECT_FLAGS=false
+	    STDIN=$tmpdir/stream
 	    start "  Processing with '$decoder'" 
 	    runit $decoder $DECODEOPTS --notify-port 6666 --execute "nullcat" 3>&1
 	    ok
 
+	    EXPECT_FLAGS=true
+	    STDIN=$tmpdir/stream.params
+	    start "  Processing with '$decoder' and parameters" 
+	    runit $decoder $DECODEOPTS --notify-port 6666 --execute "nullcat" 3>&1
+	    ok
+	    
 	    ! $SKIP_POST || continue
 
 	    test -e $tmpdir/start -a -e $tmpdir/end -a \

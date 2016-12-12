@@ -2,6 +2,12 @@
 
 set -e
 
+if $EXPECT_FLAGS; then
+  test -n "$X_RESCUE_FLAG_FOO"
+  test -n "$X_RESCUE_FLAG_BAR"
+  test x"$X_RESCUE_VALUE_KEY" = xVAL;
+fi
+
 case $1 in
   start|end)	touch ${O}"$1" ;;
   stream)	cat > ${O}result.tmp ;;
