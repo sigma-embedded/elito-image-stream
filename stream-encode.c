@@ -51,14 +51,14 @@ static struct option const		CMDLINE_OPTIONS[] = {
 	{ NULL, 0, 0, 0 }
 };
 
-static void show_help(void)
+__attribute__((__noreturn__)) static void show_help(void)
 {
 	printf("Usage: stream-encode [-V <version>]\n"
 	       "            [--hunk|-h <type>[,<opts>]!<filename>]\n");
 	exit(0);
 }
 
-static void show_version(void)
+__attribute__((__noreturn__)) static void show_version(void)
 {
 	/* \todo: implement me */
 	exit(0);

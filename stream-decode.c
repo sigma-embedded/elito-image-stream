@@ -131,13 +131,13 @@ struct memory_block_signature {
 	struct stream_hunk_header const	*hhdr;
 };
 
-static void show_help(void)
+__attribute__((__noreturn__)) static void show_help(void)
 {
 	printf("Usage: stream-decode --execute|-x <prog>\n");
 	exit(0);
 }
 
-static void show_version(void)
+__attribute__((__noreturn__)) static void show_version(void)
 {
 	/* \todo: implement me */
 	exit(0);
